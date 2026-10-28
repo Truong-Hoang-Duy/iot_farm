@@ -1,0 +1,23 @@
+{
+  "name": "iot_farm_monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IoT Smart Farm Monorepo with React Frontend and FastAPI Backend",
+  "scripts": {
+    "dev": "npx -y concurrently -n \"FRONTEND,BACKEND\" -c \"cyan.bold,green.bold\" \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python3 -m uvicorn app.main:app --reload --port 8000",
+    "build:frontend": "cd frontend && npm run build",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt"
+  },
+  "keywords": [
+    "iot",
+    "fastapi",
+    "react",
+    "gemini-ai",
+    "smart-farm"
+  ],
+  "author": "UIT",
+  "license": "MIT"
+}
