@@ -11,7 +11,6 @@ class SensorReading(BaseModel):
     K: Optional[float] = Field(None, description="Kali K (ppm hoặc mg/kg)")
     temperature: Optional[float] = Field(None, description="Nhiệt độ không khí (°C)")
     humidity: Optional[float] = Field(None, description="Độ ẩm không khí (%)")
-    light: Optional[float] = Field(None, description="Cường độ ánh sáng")
 
 class AdvisorRequest(BaseModel):
     plant_type: Optional[str] = Field(None, description="Loại cây trồng")

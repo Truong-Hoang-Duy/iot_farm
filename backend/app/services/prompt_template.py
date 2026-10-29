@@ -65,7 +65,6 @@ Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
   + Hàm lượng Kali (K): {sensor.get('K', 'N/A')} ppm
   + Nhiệt độ không khí: {sensor.get('temperature', 'N/A')}°C
   + Độ ẩm không khí: {sensor.get('humidity', 'N/A')}%
-  + Cường độ ánh sáng: {sensor.get('light', 'N/A')}
 """
     if custom_notes:
         prompt += f"- Ghi chú của nông dân: {custom_notes}\n"
