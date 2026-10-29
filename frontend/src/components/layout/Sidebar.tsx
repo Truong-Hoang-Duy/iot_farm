@@ -14,7 +14,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatDateTimeVN } from '@/lib/utils';
 
 const navigation = [
   { name: 'Tổng quan', href: '/', icon: LayoutDashboard },
@@ -179,7 +179,7 @@ export function Sidebar({ isCollapsed = false, onToggleCollapse }: SidebarProps)
                   Kết nối: <span className="text-success font-medium">Trực tuyến</span>
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Cập nhật: {new Date().toLocaleTimeString('vi-VN')}
+                  Cập nhật: {formatDateTimeVN(new Date())}
                 </p>
               </div>
             </div>

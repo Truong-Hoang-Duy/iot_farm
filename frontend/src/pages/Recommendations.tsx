@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cn } from '@/lib/utils';
+import { cn, formatDateVN, formatDateTimeVN } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchProcessedStagesSummary,
@@ -238,7 +238,7 @@ export default function RecommendationsPage() {
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="hidden md:flex items-center gap-2 text-xs text-muted-foreground bg-secondary/60 px-3 py-1.5 rounded-full border border-border">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Lưu DB lúc {lastUpdate.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+            Lưu DB: {formatDateTimeVN(lastUpdate)}
           </div>
 
           <Button
@@ -381,7 +381,7 @@ export default function RecommendationsPage() {
                   So sánh số đo hiện tại với mức chuẩn giai đoạn {activeStage.stageNumber}
                 </h4>
                 <span className="text-xs text-muted-foreground">
-                  Mẫu: <strong className="text-foreground">{sensorTimestamp || backendSummary?.latest?.timestamp || 'Mới nhất'}</strong>
+                  Mẫu: <strong className="text-foreground">{formatDateTimeVN(sensorTimestamp || backendSummary?.latest?.timestamp) || 'Mới nhất'}</strong>
                 </span>
               </div>
 

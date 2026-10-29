@@ -5,7 +5,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
+import { cn, formatDateTimeVN } from '@/lib/utils';
 import { 
   subscribeStreamingConfig, 
   setStreamingIrrigationMode,
@@ -665,8 +665,8 @@ export default function ControlsPage() {
               </div>
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Lần bật cuối</p>
-                <p className="font-display text-lg font-semibold">
-                 {pumpInfo.last_on_time  ? new Date(Number(pumpInfo.last_on_time) * 1000 - 7 * 60 * 60 * 1000).toLocaleString("vi-VN")  : "--:--"}
+                <p className="font-display text-base font-semibold">
+                  {pumpInfo.last_on_time ? formatDateTimeVN(new Date(Number(pumpInfo.last_on_time) * 1000 - 7 * 60 * 60 * 1000)) : "--:--"}
                 </p>
               </div>
             </div>
@@ -689,8 +689,8 @@ export default function ControlsPage() {
               </div>
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Lần bật cuối</p>
-                <p className="font-display text-lg font-semibold">
-                  {lightInfo?.last_on_time  ? new Date(+lightInfo.last_on_time * 1000 - 7 * 60 * 60 * 1000).toLocaleString("vi-VN")  : "--:--"}
+                <p className="font-display text-base font-semibold">
+                  {lightInfo?.last_on_time ? formatDateTimeVN(new Date(+lightInfo.last_on_time * 1000 - 7 * 60 * 60 * 1000)) : "--:--"}
                 </p>
               </div>
             </div>

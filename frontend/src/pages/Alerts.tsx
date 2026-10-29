@@ -18,7 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatDateVN, formatDateTimeVN } from '@/lib/utils';
 import {
   subscribeAlerts,
   FirebaseAlertData,
@@ -246,8 +246,7 @@ export default function AlertsPage() {
   const dismissedAlerts = useMemo(() => alerts.filter((a) => !a.active || a.dismissed), [alerts]);
 
   const handleConfirm = async (alert: FirebaseAlertData) => {
-    const now = new Date();
-    const timeStr = `${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${now.toLocaleDateString('vi-VN')}`;
+    const timeStr = formatDateTimeVN(new Date());
 
     updateLocalOverride(alert.id, {
       acknowledged: true,
@@ -279,8 +278,7 @@ export default function AlertsPage() {
   const handleDismissConfirm = async () => {
     if (!dismissTarget) return;
 
-    const now = new Date();
-    const timeStr = `${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${now.toLocaleDateString('vi-VN')}`;
+    const timeStr = formatDateTimeVN(new Date());
 
     updateLocalOverride(dismissTarget.id, {
       active: false,
@@ -333,8 +331,7 @@ export default function AlertsPage() {
   };
 
   const handleConfirmAll = async () => {
-    const now = new Date();
-    const timeStr = `${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${now.toLocaleDateString('vi-VN')}`;
+    const timeStr = formatDateTimeVN(new Date());
 
     const newOverrides = { ...overrides };
     for (const a of unconfirmedAlerts) {
@@ -357,8 +354,7 @@ export default function AlertsPage() {
   };
 
   const handleDismissAll = async () => {
-    const now = new Date();
-    const timeStr = `${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} ${now.toLocaleDateString('vi-VN')}`;
+    const timeStr = formatDateTimeVN(new Date());
 
     const newOverrides = { ...overrides };
     for (const a of activeAlerts) {
@@ -394,7 +390,7 @@ export default function AlertsPage() {
       if (minutes < 60) return `${minutes} phút trước`;
       if (hours < 24) return `${hours} giờ trước`;
       if (days < 7) return `${days} ngày trước`;
-      return date.toLocaleDateString('vi-VN');
+      return formatDateVN(date);
     } catch {
       return timestamp;
     }
@@ -457,7 +453,7 @@ export default function AlertsPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
               <span className="font-semibold text-foreground">
-                Mẫu đo ngày hôm nay: <span className="text-primary">{aiBundle.sensor_timestamp}</span>
+                Mẫu đo: <span className="text-primary">{formatDateTimeVN(aiBundle.sensor_timestamp)}</span>
               </span>
               <span className="text-muted-foreground">•</span>
               <span className="text-muted-foreground">
@@ -717,11 +713,11 @@ export default function AlertsPage() {
 
                           {isDismissed ? (
                             <span className="text-xs px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border font-medium flex items-center gap-1">
-                              <X className="h-3 w-3" /> Đã hủy bỏ {alert.dismissedAt ? `(${alert.dismissedAt})` : ''}
+                              <X className="h-3 w-3" /> Đã hủy bỏ {alert.dismissedAt ? `(${formatDateTimeVN(alert.dismissedAt)})` : ''}
                             </span>
                           ) : isAcknowledged ? (
                             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 font-medium flex items-center gap-1">
-                              <CheckCircle2 className="h-3 w-3" /> Đã xử lý {alert.acknowledgedAt ? `(${alert.acknowledgedAt})` : ''}
+                              <CheckCircle2 className="h-3 w-3" /> Đã xử lý {alert.acknowledgedAt ? `(${formatDateTimeVN(alert.acknowledgedAt)})` : ''}
                             </span>
                           ) : (
                             <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 font-medium flex items-center gap-1">
@@ -745,7 +741,7 @@ export default function AlertsPage() {
 
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5" />
-                          Thời điểm mẫu đo: {alert.time} ({formatTime(alert.time)})
+                          Thời điểm mẫu đo: {formatDateTimeVN(alert.time)} ({formatTime(alert.time)})
                         </p>
                       </div>
                     </div>

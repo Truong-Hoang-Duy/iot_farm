@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { cn, formatDateVN, formatDateTimeVN } from '@/lib/utils';
 import {
   subscribeStreamingConfig,
   subscribeSensorData,
@@ -169,8 +169,8 @@ export default function PlantInfoPage() {
               </span>
             </div>
             <p className="text-xs sm:text-sm text-white/85 mt-1">
-              Trồng từ ngày {datasetSummary.firstDate} đến {datasetSummary.lastDate}
-              {latestTimestamp && ` • Cập nhật: ${latestTimestamp}`}
+              Trồng từ ngày {formatDateVN(datasetSummary.firstDate)} đến {formatDateVN(datasetSummary.lastDate)}
+              {latestTimestamp && ` • Cập nhật: ${formatDateTimeVN(latestTimestamp)}`}
             </p>
           </div>
 
@@ -188,7 +188,7 @@ export default function PlantInfoPage() {
               Ngày thứ {actualDaysPlanted}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Bắt đầu: {datasetSummary.firstDate}
+              Bắt đầu: {formatDateVN(datasetSummary.firstDate)}
             </p>
           </div>
 

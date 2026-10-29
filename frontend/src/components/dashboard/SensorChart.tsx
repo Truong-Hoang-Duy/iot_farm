@@ -175,9 +175,18 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
     }
     
     // Prepare data for Excel
-    const excelData = chartData.map(row => ({
-      'Thời gian': row.timestamp,
-      'Độ ẩm đất (%)': row.moisture,
+    const excelData = chartData.map(row => {
+      let formattedTime = row.timestamp;
+      if (mode === 'single' && selectedDate) {
+        formattedTime = `${row.timestamp} ${format(selectedDate, 'dd/MM/yyyy')}`;
+      } else if (row.date) {
+        const timePart = row.timestamp.includes(' ') ? row.timestamp.split(' ')[1] : row.timestamp;
+        const [y, m, d] = row.date.split('-');
+        formattedTime = `${timePart} ${d}/${m}/${y}`;
+      }
+      return {
+        'Thời gian': formattedTime,
+        'Độ ẩm đất (%)': row.moisture,
       'Nhiệt độ đất (°C)': row.soiltemp,
       'pH': row.pH,
       'EC (mS/cm)': row.EC,
@@ -186,7 +195,8 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
       'K (ppm)': row.K,
       'Nhiệt độ KK (°C)': row.temperature,
       'Độ ẩm KK (%)': row.humidity,
-    }));
+    };
+  });
 
     // Create workbook and worksheet
     const worksheet = XLSX.utils.json_to_sheet(excelData);

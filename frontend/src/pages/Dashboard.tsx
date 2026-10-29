@@ -11,6 +11,7 @@ import {
 } from '@/services/firebaseAPI';
 import { getPlantData, getCurrentStageIndex } from '@/data/plantGrowthData';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeVN } from '@/lib/utils';
 
 export default function Dashboard() {
   const [latestReading, setLatestReading] = useState<FirebaseSensorReading | null>(null);
@@ -132,7 +133,7 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
-          Cập nhật lúc {lastUpdate.toLocaleTimeString('vi-VN')} {lastUpdate.toLocaleDateString('vi-VN')}
+          Cập nhật: {formatDateTimeVN(lastUpdate)}
         </div>
       </div>
 
