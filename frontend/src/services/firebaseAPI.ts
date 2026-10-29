@@ -200,7 +200,8 @@ export const loadProcessedSensorDataFromBackend = async (
 
   loadPromise = (async () => {
     try {
-      const res = await fetch(`/api/sensors/data?method=${encodeURIComponent(method)}`);
+      const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(`${apiBase}/api/sensors/data?method=${encodeURIComponent(method)}`);
       if (res.ok) {
         const json = await res.json();
         cachedSoilData = (json.data || json) as FirebaseSensorData;

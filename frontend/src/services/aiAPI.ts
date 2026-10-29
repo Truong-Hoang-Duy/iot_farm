@@ -51,10 +51,12 @@ export interface ChatMessageItem {
   content: string;
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
 // Kiểm tra tình trạng backend AI
 export const checkAIHealth = async (): Promise<{ status: string; gemini_configured: boolean; gemini_model: string } | null> => {
   try {
-    const res = await fetch('/api/recommendations/health');
+    const res = await fetch(`${API_BASE}/api/recommendations/health`);
     if (res.ok) {
       return await res.json();
     }
@@ -66,7 +68,7 @@ export const checkAIHealth = async (): Promise<{ status: string; gemini_configur
 
 // Gọi sinh đề xuất từ AI Advisor (lưu đè trực tiếp vào DB)
 export const fetchAIAdvisor = async (payload: AdvisorRequest = {}): Promise<AdvisorResponse> => {
-  const res = await fetch('/api/recommendations/ai-advisor', {
+  const res = await fetch(`${API_BASE}/api/recommendations/ai-advisor`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -93,7 +95,7 @@ export const sendAIChatMessage = async (
   sensor?: SensorReadingInput,
   history: ChatMessageItem[] = []
 ): Promise<string> => {
-  const res = await fetch('/api/recommendations/chat', {
+  const res = await fetch(`${API_BASE}/api/recommendations/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -116,7 +118,7 @@ export const sendAIChatMessage = async (
 // Lấy bản ghi khuyến nghị mới nhất đã được lưu trong DB/Firebase
 export const fetchLatestCachedAdvisor = async (): Promise<AdvisorResponse | null> => {
   try {
-    const res = await fetch('/api/recommendations/latest');
+    const res = await fetch(`${API_BASE}/api/recommendations/latest`);
     if (res.ok) {
       return await res.json();
     }
@@ -165,7 +167,7 @@ export interface AIAlertsBundleResponse {
 
 export const fetchLatestAIAlerts = async (refresh: boolean = false): Promise<AIAlertsBundleResponse | null> => {
   try {
-    const res = await fetch(`/api/alerts/latest?refresh=${refresh}`);
+    const res = await fetch(`${API_BASE}/api/alerts/latest?refresh=${refresh}`);
     if (res.ok) {
       return await res.json();
     }
@@ -176,7 +178,7 @@ export const fetchLatestAIAlerts = async (refresh: boolean = false): Promise<AIA
 };
 
 export const triggerAnalyzeAIAlerts = async (): Promise<AIAlertsBundleResponse> => {
-  const res = await fetch('/api/alerts/analyze', { method: 'POST' });
+  const res = await fetch(`${API_BASE}/api/alerts/analyze`, { method: 'POST' });
   if (!res.ok) {
     throw new Error(`Lỗi phân tích cảnh báo từ Gemini (HTTP ${res.status})`);
   }
@@ -184,7 +186,7 @@ export const triggerAnalyzeAIAlerts = async (): Promise<AIAlertsBundleResponse> 
 };
 
 export const insertMockTestAndAnalyzeAlerts = async (): Promise<AIAlertsBundleResponse> => {
-  const res = await fetch('/api/alerts/test-mock', { method: 'POST' });
+  const res = await fetch(`${API_BASE}/api/alerts/test-mock`, { method: 'POST' });
   if (!res.ok) {
     throw new Error(`Lỗi tạo dữ liệu test và phân tích cảnh báo (HTTP ${res.status})`);
   }
@@ -192,7 +194,7 @@ export const insertMockTestAndAnalyzeAlerts = async (): Promise<AIAlertsBundleRe
 };
 
 export const deleteMockTestAndRestoreAlerts = async (): Promise<{ message: string; data: AIAlertsBundleResponse }> => {
-  const res = await fetch('/api/alerts/test-mock', { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/alerts/test-mock`, { method: 'DELETE' });
   if (!res.ok) {
     throw new Error(`Lỗi xóa dữ liệu test (HTTP ${res.status})`);
   }
