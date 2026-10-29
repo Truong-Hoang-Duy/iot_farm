@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Save, Leaf, Lock, Calendar } from 'lucide-react';
+import { Settings as SettingsIcon, Save, Leaf, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,7 +7,6 @@ import { subscribeStreamingConfig, StreamingConfig, StreamingThreshold } from '@
 import { ref, set } from 'firebase/database';
 import { db } from '@/config/firebaseConfig';
 import { useToast } from '@/hooks/use-toast';
-import { useNavigate } from 'react-router-dom';
 import { PLANT_TYPE_OPTIONS } from '@/data/plantGrowthData';
 import {
   Select,
@@ -54,7 +53,6 @@ export default function SettingsPage() {
   const [isSavingPlantType, setIsSavingPlantType] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   // Subscribe to streaming config from Firebase
   useEffect(() => {
@@ -352,24 +350,6 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {/* Account Settings */}
-      <div className="rounded-2xl border border-border bg-card p-6">
-        <h3 className="font-display text-xl font-semibold mb-6 flex items-center gap-2">
-          <Lock className="h-5 w-5 text-warning" />
-          Bảo mật tài khoản
-        </h3>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium">Đổi mật khẩu</p>
-            <p className="text-sm text-muted-foreground">
-              Cập nhật mật khẩu tài khoản của bạn
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => navigate('/change-password')}>
-            Đổi mật khẩu
-          </Button>
-        </div>
-      </div>
 
       {/* Info Card */}
       <div className="rounded-xl bg-primary/5 border border-primary/20 p-4">

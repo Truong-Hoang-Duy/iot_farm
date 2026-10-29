@@ -1,15 +1,14 @@
-// Firebase API for all pages
+// Firebase API (Controls & Config) + Backend Sensor API
 import { db } from '../config/firebaseConfig';
 import { ref, get, set, onValue, update, remove } from 'firebase/database';
 
-// Types matching Firebase data structure
+// Types matching sensor data structure
 export interface FirebaseSensorReading {
   EC: number;
   K: number;
   N: number;
   P: number;
   humidity: number;
-  light: number;
   moisture: number;
   pH: number;
   soiltemp: number;
@@ -89,33 +88,31 @@ export interface FirebaseRecommendations {
   soilCareTips: string[];
 }
 
-// Streaming config from Firebase
 export interface StreamingThreshold {
   high: number;
   low: number;
 }
 
 export interface StreamingControlDevice {
-  status: boolean | number; // false/true or 0/1
-  daily_time?: number; // total hours on today
-  last_on_time?: string; // last time turned on
+  status: boolean | number;
+  daily_time?: number;
+  last_on_time?: string;
 }
 
-// Light schedule with on/off time
 export interface LightScheduleSlot {
-  on: number;  // hour to turn on (0-23)
-  off: number; // hour to turn off (0-23)
+  on: number;
+  off: number;
 }
 
 export interface StreamingConfig {
   config: {
-    irrigation_mode: number; // 0 = manual, 1 = auto, 2 = schedule
+    irrigation_mode: number;
     irrigation_time: {
       time1: number;
       time2: number;
-      [key: string]: number; // Allow additional time slots
+      [key: string]: number;
     };
-    light_mode: number | string; // 0 = manual, 1 = auto, 2 = schedule or empty string
+    light_mode: number | string;
     light_time?: {
       on: number | string;
       off: number | string;
@@ -141,31 +138,86 @@ export interface StreamingConfig {
   };
 }
 
-// ==================== LOCAL DATA SETTINGS ====================
-// Đặt true để dùng dữ liệu cục bộ soil_all.json (dùng tạm khi Firebase chưa upload dữ liệu mới)
-// Khi đã upload lên Firebase mới xong, có thể chuyển thành false
-export const USE_LOCAL_SOIL_DATA = true;
+// ==================== BACKEND PROCESSED SENSOR API ====================
+// Frontend gọi trực tiếp dữ liệu cảm biến đã được xử lý làm sạch từ Backend
+
+export interface BackendPipelineInfo {
+  imputation_method: string;
+  outlier_cap: string | null;
+  smoothing_1h: boolean;
+  total_rows: number;
+  total_days: number;
+  first_date: string;
+  last_date: string;
+  missing_cells_imputed: number;
+  missing_by_feature: Record<string, number>;
+  remaining_missing: number;
+}
+
+export interface BackendStageAverageItem {
+  stageNumber: number;
+  minDays: number;
+  maxDays: number;
+  startDate: string;
+  endDate: string;
+  daysRecorded: number;
+  sampleCount: number;
+  averageReading: FirebaseSensorReading;
+}
+
+export interface BackendStagesSummaryResponse {
+  latest: {
+    date: string;
+    time: string;
+    timestamp: string;
+    reading: FirebaseSensorReading;
+  };
+  summary: {
+    totalDays: number;
+    totalSamples: number;
+    firstDate: string;
+    lastDate: string;
+    missingCellsImputed: number;
+    missingByFeature: Record<string, number>;
+    imputationMethod: string;
+    overallAverage: FirebaseSensorReading;
+    latestReading: FirebaseSensorReading;
+  };
+  stage_averages: BackendStageAverageItem[];
+  pipeline_info: BackendPipelineInfo;
+}
 
 let cachedSoilData: FirebaseSensorData | null = null;
+let cachedStagesSummary: BackendStagesSummaryResponse | null = null;
 let loadPromise: Promise<FirebaseSensorData | null> | null = null;
 
-// Tải dữ liệu đất từ tệp cục bộ soil_all.json (chuỗi 261 ngày quan trắc từ Data-Processing)
-export const loadLocalSoilData = async (): Promise<FirebaseSensorData | null> => {
+// Gọi Backend API (/api/sensors/data) để lấy dữ liệu cảm biến đã xử lý
+export const loadProcessedSensorDataFromBackend = async (
+  method: string = 'ffill'
+): Promise<FirebaseSensorData | null> => {
   if (cachedSoilData) return cachedSoilData;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
     try {
-      const res = await fetch('/soil_all.json');
+      const res = await fetch(`/api/sensors/data?method=${encodeURIComponent(method)}`);
       if (res.ok) {
         const json = await res.json();
         cachedSoilData = (json.data || json) as FirebaseSensorData;
+        if (json.summary && json.stage_averages && json.pipeline_info) {
+          cachedStagesSummary = {
+            latest: json.latest,
+            summary: json.summary,
+            stage_averages: json.stage_averages,
+            pipeline_info: json.pipeline_info,
+          };
+        }
         return cachedSoilData;
       } else {
-        console.warn(`[SensorAPI] Không tìm thấy /soil_all.json (HTTP ${res.status})`);
+        console.warn(`[SensorAPI] Backend /api/sensors/data trả về HTTP ${res.status}`);
       }
     } catch (err) {
-      console.warn('[SensorAPI] Không thể tải dữ liệu cục bộ /soil_all.json:', err);
+      console.warn('[SensorAPI] Không thể kết nối Backend /api/sensors/data:', err);
     } finally {
       loadPromise = null;
     }
@@ -175,43 +227,62 @@ export const loadLocalSoilData = async (): Promise<FirebaseSensorData | null> =>
   return loadPromise;
 };
 
-export const getSensorData = async (): Promise<FirebaseSensorData> => {
-  // Khi bật USE_LOCAL_SOIL_DATA, ưu tiên đọc trực tiếp từ /soil_all.json
-  if (USE_LOCAL_SOIL_DATA) {
-    const localData = await loadLocalSoilData();
-    if (localData) return localData;
+// Gọi Backend API (/api/sensors/stages-summary) để lấy kết quả chuẩn hóa 6 giai đoạn & thông tin điền khuyết
+export const fetchProcessedStagesSummary = async (
+  method: string = 'ffill'
+): Promise<BackendStagesSummaryResponse | null> => {
+  if (cachedStagesSummary && cachedStagesSummary.pipeline_info.imputation_method === method) {
+    return cachedStagesSummary;
   }
-
   try {
-    const sensorRef = ref(db, 'data');
-    const snapshot = await get(sensorRef);
-    if (snapshot.exists()) {
-      return snapshot.val();
+    const res = await fetch(`/api/sensors/stages-summary?method=${encodeURIComponent(method)}`);
+    if (res.ok) {
+      const data = (await res.json()) as BackendStagesSummaryResponse;
+      cachedStagesSummary = data;
+      return data;
     }
-  } catch (error) {
-    console.warn('[SensorAPI] Firebase get thất bại, chuyển sang đọc /soil_all.json:', error);
+  } catch (err) {
+    console.warn('[SensorAPI] Lỗi gọi /api/sensors/stages-summary từ Backend:', err);
   }
-
-  // Fallback đọc từ tệp soil_all.json nếu chưa đọc
-  const localData = await loadLocalSoilData();
-  if (localData) {
-    return localData;
-  }
-  throw new Error('Dữ liệu cảm biến không tồn tại');
+  return cachedStagesSummary;
 };
 
-// Get latest sensor reading
-export const getLatestSensorReading = async (): Promise<{ reading: FirebaseSensorReading; timestamp: string } | null> => {
+export const getSensorData = async (): Promise<FirebaseSensorData> => {
+  const backendData = await loadProcessedSensorDataFromBackend('ffill');
+  if (backendData) {
+    return backendData;
+  }
+  throw new Error('Không thể tải dữ liệu cảm biến đã xử lý từ Backend API (/api/sensors/data)');
+};
+
+// Lấy mẫu cảm biến mới nhất đã làm sạch từ Backend API (/api/sensors/latest)
+export const getLatestSensorReading = async (): Promise<{
+  reading: FirebaseSensorReading;
+  timestamp: string;
+} | null> => {
+  try {
+    const res = await fetch('/api/sensors/latest');
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.reading) {
+        return {
+          reading: json.reading as FirebaseSensorReading,
+          timestamp: json.timestamp || `${json.date} ${json.time}`,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[SensorAPI] Lỗi gọi /api/sensors/latest, chuyển sang đọc từ bộ nhớ đệm Backend:', err);
+  }
+
   const data = await getSensorData();
-  
-  // Get all dates and sort them
   const dates = Object.keys(data).sort().reverse();
   if (dates.length === 0) return null;
-  
+
   const latestDate = dates[0];
   const times = Object.keys(data[latestDate]).sort().reverse();
   if (times.length === 0) return null;
-  
+
   const latestTime = times[0];
   return {
     reading: data[latestDate][latestTime],
@@ -219,46 +290,19 @@ export const getLatestSensorReading = async (): Promise<{ reading: FirebaseSenso
   };
 };
 
-// Subscribe to real-time sensor updates with local fallback
+// Đăng ký nhận dữ liệu cảm biến đã làm sạch từ Backend API
 export const subscribeSensorData = (callback: (data: FirebaseSensorData) => void) => {
-  // Nếu bật chế độ dùng tạm dữ liệu cục bộ soil_all.json
-  if (USE_LOCAL_SOIL_DATA) {
-    loadLocalSoilData().then((localData) => {
-      if (localData) {
-        callback(localData);
-      }
-    });
-    return () => {};
-  }
+  let isCancelled = false;
 
-  const sensorRef = ref(db, 'data');
-  let hasReceivedFirebase = false;
-
-  const unsubscribe = onValue(
-    sensorRef,
-    (snapshot) => {
-      if (snapshot.exists()) {
-        hasReceivedFirebase = true;
-        callback(snapshot.val());
-      } else if (!hasReceivedFirebase) {
-        loadLocalSoilData().then((localData) => {
-          if (localData && !hasReceivedFirebase) {
-            callback(localData);
-          }
-        });
-      }
-    },
-    (error) => {
-      console.warn('[SensorAPI] Firebase listen error, using local fallback:', error);
-      if (!hasReceivedFirebase) {
-        loadLocalSoilData().then((localData) => {
-          if (localData) callback(localData);
-        });
-      }
+  loadProcessedSensorDataFromBackend('ffill').then((backendData) => {
+    if (backendData && !isCancelled) {
+      callback(backendData);
     }
-  );
+  });
 
-  return unsubscribe;
+  return () => {
+    isCancelled = true;
+  };
 };
 
 // ==================== CONTROL API ====================
@@ -268,7 +312,6 @@ export const getControlData = async (): Promise<FirebaseControlData> => {
   if (snapshot.exists()) {
     return snapshot.val();
   }
-  // Return default values if not exists
   return {
     irrigationMode: 'auto',
     pump: false,
@@ -294,7 +337,6 @@ export const toggleLight = async (state: boolean): Promise<void> => {
   await updateControlData({ light: state });
 };
 
-// Subscribe to real-time control updates
 export const subscribeControlData = (callback: (data: FirebaseControlData) => void) => {
   const controlRef = ref(db, 'controls');
   return onValue(controlRef, (snapshot) => {
@@ -318,7 +360,6 @@ export const getAlerts = async (): Promise<FirebaseAlertData[]> => {
   return [];
 };
 
-// Subscribe to real-time alert updates
 export const subscribeAlerts = (callback: (data: FirebaseAlertData[]) => void) => {
   const alertsRef = ref(db, 'notifications');
   return onValue(alertsRef, (snapshot) => {
@@ -335,7 +376,6 @@ export const subscribeAlerts = (callback: (data: FirebaseAlertData[]) => void) =
   });
 };
 
-// Cập nhật cảnh báo
 export const updateAlert = async (id: string, data: Partial<FirebaseAlertData>): Promise<void> => {
   try {
     const alertRef = ref(db, `notifications/${id}`);
@@ -345,7 +385,6 @@ export const updateAlert = async (id: string, data: Partial<FirebaseAlertData>):
   }
 };
 
-// Xác nhận cảnh báo (Acknowledge)
 export const acknowledgeAlert = async (id: string): Promise<void> => {
   const now = new Date();
   const timeStr = `${now.toLocaleDateString('vi-VN')} ${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
@@ -355,7 +394,6 @@ export const acknowledgeAlert = async (id: string): Promise<void> => {
   });
 };
 
-// Hủy xác nhận cảnh báo (Un-acknowledge)
 export const unacknowledgeAlert = async (id: string): Promise<void> => {
   await updateAlert(id, {
     acknowledged: false,
@@ -363,7 +401,6 @@ export const unacknowledgeAlert = async (id: string): Promise<void> => {
   });
 };
 
-// Hủy bỏ cảnh báo (Dismiss / Cancel)
 export const dismissAlert = async (id: string): Promise<void> => {
   const now = new Date();
   const timeStr = `${now.toLocaleDateString('vi-VN')} ${now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`;
@@ -374,7 +411,6 @@ export const dismissAlert = async (id: string): Promise<void> => {
   });
 };
 
-// Kích hoạt lại cảnh báo đã hủy (Reactivate)
 export const reactivateAlert = async (id: string): Promise<void> => {
   await updateAlert(id, {
     active: true,
@@ -382,7 +418,6 @@ export const reactivateAlert = async (id: string): Promise<void> => {
   });
 };
 
-// Xóa cảnh báo vĩnh viễn
 export const deleteAlert = async (id: string): Promise<void> => {
   try {
     const alertRef = ref(db, `notifications/${id}`);
@@ -399,7 +434,6 @@ export const getPlantInfo = async (): Promise<FirebasePlantInfo> => {
   if (snapshot.exists()) {
     return snapshot.val();
   }
-  // Return default values if not exists
   return {
     type: 'Cây ớt',
     daysPlanted: 0,
@@ -429,7 +463,6 @@ export const getSettings = async (): Promise<FirebaseSettings> => {
   if (snapshot.exists()) {
     return snapshot.val();
   }
-  // Return default values if not exists
   return {
     plantType: 'Cây ớt',
     daysPlanted: 0,
@@ -508,7 +541,6 @@ export const defaultStreamingConfig: StreamingConfig = {
   },
 };
 
-// Subscribe to real-time streaming config updates (for thresholds)
 export const subscribeStreamingConfig = (callback: (data: StreamingConfig | null) => void) => {
   const streamingRef = ref(db, 'streaming');
   return onValue(
@@ -529,25 +561,21 @@ export const subscribeStreamingConfig = (callback: (data: StreamingConfig | null
 
 // ==================== STREAMING CONTROL API ====================
 
-// Set pump irrigation mode (0 = manual, 1 = auto, 2 = schedule)
 export const setStreamingIrrigationMode = async (mode: number): Promise<void> => {
   const modeRef = ref(db, 'streaming/config/irrigation_mode');
   await set(modeRef, mode);
 };
 
-// Set light mode (0 = manual, 1 = auto, 2 = schedule)
 export const setStreamingLightMode = async (mode: number): Promise<void> => {
   const modeRef = ref(db, 'streaming/config/light_mode');
   await set(modeRef, mode);
 };
 
-// Set control status (pump or light) - only works in manual mode
 export const setStreamingControlStatus = async (device: 'pump' | 'light', status: boolean): Promise<void> => {
   const statusRef = ref(db, `streaming/control/${device}/status`);
   await set(statusRef, status);
 };
 
-// Set irrigation schedule times - set each field individually
 export const setStreamingIrrigationTime = async (times: { time1?: number; time2?: number }): Promise<void> => {
   if (times.time1 !== undefined) {
     const time1Ref = ref(db, 'streaming/config/irrigation_time/time1');
@@ -559,7 +587,6 @@ export const setStreamingIrrigationTime = async (times: { time1?: number; time2?
   }
 };
 
-// Set light schedule time (single on/off)
 export const setStreamingLightTime = async (on: number, off: number): Promise<void> => {
   const timeRef = ref(db, 'streaming/config/light_time/on');
   await set(timeRef, on);
@@ -568,7 +595,6 @@ export const setStreamingLightTime = async (on: number, off: number): Promise<vo
   await set(timeRef2, off);
 };
 
-// Helper to get control device status
 export const getControlDeviceStatus = (device: StreamingControlDevice | number | boolean): { status: boolean; daily_time: number; last_on_time: string } => {
   if (typeof device === 'number') {
     return { status: device === 1, daily_time: 0, last_on_time: '' };
@@ -583,18 +609,15 @@ export const getControlDeviceStatus = (device: StreamingControlDevice | number |
   };
 };
 
-// Update streaming thresholds - set each sensor threshold individually
 export const updateStreamingThreshold = async (thresholds: StreamingConfig['config']['threshold']): Promise<void> => {
   const sensorKeys = Object.keys(thresholds) as Array<keyof typeof thresholds>;
   
   for (const sensorKey of sensorKeys) {
     const threshold = thresholds[sensorKey];
     if (threshold) {
-      // Set low value
       const lowRef = ref(db, `streaming/config/threshold/${sensorKey}/low`);
       await set(lowRef, threshold.low);
       
-      // Set high value
       const highRef = ref(db, `streaming/config/threshold/${sensorKey}/high`);
       await set(highRef, threshold.high);
     }

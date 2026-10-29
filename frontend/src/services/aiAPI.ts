@@ -11,14 +11,13 @@ export interface SensorReadingInput {
   K?: number;
   temperature?: number;
   humidity?: number;
-  light?: number;
 }
 
 export interface AdvisorRequest {
   plant_type?: string;
   age_days?: number;
   growth_stage?: string;
-  sensor_reading: SensorReadingInput;
+  sensor_reading?: SensorReadingInput;
   custom_notes?: string;
 }
 
@@ -32,6 +31,9 @@ export interface FertilizerPlanItem {
 
 export interface AdvisorResponse {
   status: string;
+  plant_type?: string;
+  age_days?: number;
+  growth_stage?: string;
   soil_health_score: number;
   summary: string;
   fertilizer_plan: FertilizerPlanItem[];
@@ -40,6 +42,8 @@ export interface AdvisorResponse {
   soil_improvement_tips: string[];
   ai_model_used: string;
   timestamp: string;
+  saved_at?: string;
+  sensor_snapshot?: Record<string, any>;
 }
 
 export interface ChatMessageItem {
@@ -60,19 +64,19 @@ export const checkAIHealth = async (): Promise<{ status: string; gemini_configur
   return null;
 };
 
-// Gọi sinh đề xuất từ AI Advisor
-export const fetchAIAdvisor = async (payload: AdvisorRequest): Promise<AdvisorResponse> => {
+// Gọi sinh đề xuất từ AI Advisor (lưu đè trực tiếp vào DB)
+export const fetchAIAdvisor = async (payload: AdvisorRequest = {}): Promise<AdvisorResponse> => {
   const res = await fetch('/api/recommendations/ai-advisor', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      plant_type: payload.plant_type || 'Cây ớt',
-      age_days: payload.age_days || 45,
-      growth_stage: payload.growth_stage || 'Ra hoa & tạo quả',
+      plant_type: payload.plant_type,
+      age_days: payload.age_days,
+      growth_stage: payload.growth_stage,
       sensor_reading: payload.sensor_reading,
-      custom_notes: payload.custom_notes || '',
+      custom_notes: payload.custom_notes,
     }),
   });
 
@@ -109,7 +113,7 @@ export const sendAIChatMessage = async (
   return data.reply;
 };
 
-// Lấy bản ghi khuyến nghị mới nhất đã được lưu trong Cache/Firebase (0s load time)
+// Lấy bản ghi khuyến nghị mới nhất đã được lưu trong DB/Firebase
 export const fetchLatestCachedAdvisor = async (): Promise<AdvisorResponse | null> => {
   try {
     const res = await fetch('/api/recommendations/latest');
@@ -117,8 +121,80 @@ export const fetchLatestCachedAdvisor = async (): Promise<AdvisorResponse | null
       return await res.json();
     }
   } catch (err) {
-    console.warn('[IoT Farm API] Không thể lấy cache khuyến nghị:', err);
+    console.warn('[IoT Farm API] Không thể lấy khuyến nghị từ DB:', err);
   }
   return null;
 };
 
+// ==================== AI ALERTS API (GEMINI DYNAMIC ALERTS) ====================
+export interface AIAlertItem {
+  id: string;
+  level: 0 | 1 | 2;
+  message: string;
+  action: string;
+  time: string;
+  active: boolean;
+}
+
+export interface AIAlertsBundleResponse {
+  status: string;
+  is_mock_test: boolean;
+  sensor_timestamp: string;
+  sensor_reading: SensorReadingInput;
+  plant_context: {
+    plant_type: string;
+    age_days: number;
+    stage_number: number;
+    growth_stage: string;
+  };
+  anomalies_detected: Array<{
+    key: string;
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    unit: string;
+    status: string;
+    delta: string;
+  }>;
+  prompt_used: string;
+  ai_model_used: string;
+  generated_at: string;
+  alerts: AIAlertItem[];
+}
+
+export const fetchLatestAIAlerts = async (refresh: boolean = false): Promise<AIAlertsBundleResponse | null> => {
+  try {
+    const res = await fetch(`/api/alerts/latest?refresh=${refresh}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('[AI Alerts API] Lỗi đọc cảnh báo từ Backend:', err);
+  }
+  return null;
+};
+
+export const triggerAnalyzeAIAlerts = async (): Promise<AIAlertsBundleResponse> => {
+  const res = await fetch('/api/alerts/analyze', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Lỗi phân tích cảnh báo từ Gemini (HTTP ${res.status})`);
+  }
+  return await res.json();
+};
+
+export const insertMockTestAndAnalyzeAlerts = async (): Promise<AIAlertsBundleResponse> => {
+  const res = await fetch('/api/alerts/test-mock', { method: 'POST' });
+  if (!res.ok) {
+    throw new Error(`Lỗi tạo dữ liệu test và phân tích cảnh báo (HTTP ${res.status})`);
+  }
+  return await res.json();
+};
+
+export const deleteMockTestAndRestoreAlerts = async (): Promise<{ message: string; data: AIAlertsBundleResponse }> => {
+  const res = await fetch('/api/alerts/test-mock', { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(`Lỗi xóa dữ liệu test (HTTP ${res.status})`);
+  }
+  return await res.json();
+};

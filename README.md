@@ -27,16 +27,9 @@ Hệ thống cho phép:
 
 ---
 
-## 🔐 Thông tin tài khoản đăng nhập
+## 🔐 Cơ chế truy cập
 
-Hệ thống sử dụng **Firebase Authentication** để xác thực người dùng. Dưới đây là các tài khoản quản trị đã được thiết lập sẵn:
-
-| Loại tài khoản | Email | Mật khẩu | Quyền hạn |
-| :--- | :--- | :--- | :--- |
-| **Quản trị viên (Admin)** | `admin@smartfarm.com` | `admin123456` | Toàn quyền giám sát & điều khiển hệ thống |
-| **Tài khoản tác giả** | `truonghoangduy.work@gmail.com` | `admin123456` | Toàn quyền giám sát & điều khiển hệ thống |
-
-> 💡 **Lưu ý:** Sau khi đăng nhập, bạn có thể vào mục **Cài đặt** (`/settings`) ➔ **Bảo mật tài khoản** ➔ chọn **Đổi mật khẩu** (`/change-password`) để đổi mật khẩu mới bất cứ lúc nào.
+Hệ thống đã **tắt màn hình đăng nhập**. Người dùng truy cập trực tiếp vào hệ thống giám sát và điều khiển tại [http://localhost:8080/](http://localhost:8080/) mà không cần tài khoản hay mật khẩu.
 
 ---
 

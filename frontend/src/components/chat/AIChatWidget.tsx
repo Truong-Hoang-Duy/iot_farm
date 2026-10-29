@@ -19,7 +19,7 @@ import { getLatestSensorReading, FirebaseSensorReading } from '@/services/fireba
 const INITIAL_MESSAGES: ChatMessageItem[] = [
   {
     role: 'model',
-    content: 'Xin chào! Tôi là Trợ lý ảo IoT Farm. Tôi có thể hỗ trợ bạn theo dõi tình trạng đất, chế độ tưới, bón phân và kỹ thuật chăm sóc cây ớt trên hệ thống IoT Farm.'
+    content: 'Xin chào! Tôi là trợ lý ảo IoT Farm. Tôi có thể hỗ trợ bạn theo dõi tình trạng đất, chế độ tưới, bón phân và kỹ thuật chăm sóc cây ớt.'
   }
 ];
 
@@ -145,7 +145,7 @@ export function AIChatWidget() {
                 </h4>
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Hỗ trợ kỹ thuật canh tác • Trực tuyến</span>
+                  <span>Hỗ trợ kỹ thuật chăm sóc cây • Trực tuyến</span>
                 </div>
               </div>
             </div>
@@ -258,7 +258,7 @@ export function AIChatWidget() {
             >
               <Input
                 ref={inputRef}
-                placeholder="Hỏi Trợ lý IoT Farm về đất, phân bón, tưới nước..."
+                placeholder="Hỏi trợ lý IoT Farm về đất, phân bón, tưới nước..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={isLoading}
@@ -289,7 +289,7 @@ export function AIChatWidget() {
             ? "bg-secondary hover:bg-secondary/80 text-foreground" 
             : "bg-primary hover:bg-primary/90 text-primary-foreground hover:scale-105 shadow-primary/25"
         )}
-        title={isOpen ? "Đóng trợ lý IoT Farm" : "Mở Trợ lý IoT Farm"}
+        title={isOpen ? "Đóng trợ lý IoT Farm" : "Mở trợ lý IoT Farm"}
       >
         {isOpen ? (
           <Minimize2 className="h-5 w-5" />

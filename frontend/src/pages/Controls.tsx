@@ -381,7 +381,7 @@ export default function ControlsPage() {
                           <Clock className="h-4 w-4 text-water shrink-0" />
                           <div className="flex-1">
                             <label className="text-xs text-muted-foreground mb-1 block">
-                              Thời điểm 1 (Sáng)
+                              Thời điểm 1 (sáng)
                             </label>
                             <div className="flex items-center gap-2">
                               <Input
@@ -401,7 +401,7 @@ export default function ControlsPage() {
                           <Clock className="h-4 w-4 text-water shrink-0" />
                           <div className="flex-1">
                             <label className="text-xs text-muted-foreground mb-1 block">
-                              Thời điểm 2 (Chiều)
+                              Thời điểm 2 (chiều)
                             </label>
                             <div className="flex items-center gap-2">
                               <Input

@@ -1,13 +1,32 @@
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.recommendations import router as recommendations_router
+from app.api.sensors import router as sensors_router
+from app.api.alerts import router as alerts_router
 from app.core.config import is_gemini_configured, GEMINI_MODEL
 from app.services.scheduler import auto_recommendation_worker
+from app.services.sensor_processing_service import get_processed_sensor_bundle
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        bundle = await get_processed_sensor_bundle(method="ffill")
+        info = bundle["pipeline_info"]
+        print(
+            f"[Startup] Đã nạp và làm sạch {info['total_rows']:,} bản ghi cảm biến "
+            f"({info['first_date']} -> {info['last_date']})."
+        )
+    except Exception as e:
+        print(f"[Startup] Cảnh báo khi nạp dữ liệu cảm biến ban đầu: {e}")
+
     # Khởi động worker phân tích định kỳ chạy ngầm
     worker_task = asyncio.create_task(auto_recommendation_worker())
     yield
@@ -37,12 +56,14 @@ app.add_middleware(
 )
 
 # Gắn router
+app.include_router(sensors_router, prefix="/api")
 app.include_router(recommendations_router, prefix="/api")
+app.include_router(alerts_router, prefix="/api")
 
 @app.get("/")
 def read_root():
     return {
-        "message": "IoT Farm AI Backend is running!",
+        "message": "IoT Farm AI & Sensor Processing Backend is running!",
         "gemini_active": is_gemini_configured(),
         "gemini_model": GEMINI_MODEL,
         "docs_url": "/docs"

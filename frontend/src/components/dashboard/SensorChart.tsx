@@ -186,7 +186,6 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
       'K (ppm)': row.K,
       'Nhiệt độ KK (°C)': row.temperature,
       'Độ ẩm KK (%)': row.humidity,
-      'Ánh sáng': row.light,
     }));
 
     // Create workbook and worksheet

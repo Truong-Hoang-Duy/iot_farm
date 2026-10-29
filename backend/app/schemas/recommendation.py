@@ -14,10 +14,10 @@ class SensorReading(BaseModel):
     light: Optional[float] = Field(None, description="Cường độ ánh sáng")
 
 class AdvisorRequest(BaseModel):
-    plant_type: str = Field("Cây ớt", description="Loại cây trồng")
-    age_days: int = Field(45, description="Tuổi cây (ngày)")
-    growth_stage: str = Field("Ra hoa & tạo quả", description="Giai đoạn sinh trưởng")
-    sensor_reading: SensorReading = Field(..., description="Dữ liệu quan trắc đất hiện tại")
+    plant_type: Optional[str] = Field(None, description="Loại cây trồng")
+    age_days: Optional[int] = Field(None, description="Tuổi cây thực tế (ngày)")
+    growth_stage: Optional[str] = Field(None, description="Giai đoạn sinh trưởng thực tế")
+    sensor_reading: Optional[SensorReading] = Field(None, description="Dữ liệu quan trắc đất hiện tại")
     custom_notes: Optional[str] = Field(None, description="Ghi chú thêm về vườn")
 
 class FertilizerItem(BaseModel):
@@ -29,6 +29,9 @@ class FertilizerItem(BaseModel):
 
 class AdvisorResponse(BaseModel):
     status: str = Field("success", description="Trạng thái phân tích")
+    plant_type: Optional[str] = Field(None, description="Loại cây trồng")
+    age_days: Optional[int] = Field(None, description="Tuổi cây thực tế")
+    growth_stage: Optional[str] = Field(None, description="Giai đoạn sinh trưởng")
     soil_health_score: int = Field(..., description="Điểm số sức khỏe đất (0 - 100)")
     summary: str = Field(..., description="Đánh giá tổng quan từ chuyên gia AI")
     fertilizer_plan: List[FertilizerItem] = Field(default_factory=list, description="Phác đồ bón phân")
@@ -37,6 +40,8 @@ class AdvisorResponse(BaseModel):
     soil_improvement_tips: List[str] = Field(default_factory=list, description="Mẹo cải tạo đất")
     ai_model_used: str = Field("Google Gemini 2.5 Flash", description="Mô hình AI xử lý")
     timestamp: str = Field(..., description="Thời điểm sinh đề xuất")
+    saved_at: Optional[str] = Field(None, description="Thời điểm lưu vào DB")
+    sensor_snapshot: Optional[Dict[str, Any]] = Field(None, description="Bản chụp cảm biến lúc phân tích")
 
 class ChatMessage(BaseModel):
     role: str = Field("user", description="user hoặc model")

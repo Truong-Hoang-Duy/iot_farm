@@ -2,76 +2,91 @@ import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
 from app.services.firebase_service import (
-    get_latest_sensor_from_firebase,
     save_recommendation_to_firebase,
-    get_cached_recommendation_from_firebase
+    get_cached_recommendation_from_firebase,
 )
 from app.services.gemini_service import get_gemini_agronomy_advice
+from app.services.sensor_processing_service import get_current_plant_context
 
-# Lưu vết lần chạy phân tích tự động gần nhất (tránh chạy lặp lại trong cùng 1 giờ)
 _last_auto_run_key: Optional[str] = None
 
+
+def _is_cache_outdated(cached: Optional[Dict[str, Any]], context: Dict[str, Any]) -> bool:
+    """Kiểm tra bản lưu trong DB có bị lệch tuổi cây, giai đoạn hoặc mẫu đo cảm biến mới nhất không."""
+    if not cached:
+        return True
+    if cached.get("age_days") != context["age_days"]:
+        return True
+    if cached.get("growth_stage") != context["growth_stage"]:
+        return True
+    snap = cached.get("sensor_snapshot") or {}
+    latest_reading = context["reading"]
+    for key in ("moisture", "pH", "EC", "N", "P", "K"):
+        if snap.get(key) != latest_reading.get(key):
+            return True
+    return False
+
+
 async def run_auto_analysis(trigger_reason: str = "scheduled") -> Optional[Dict[str, Any]]:
-    """Thực hiện quy trình đọc cảm biến từ Firebase và lưu khuyến nghị mới."""
-    print(f"[Scheduler] Đang kích hoạt phân tích tự động (Lý do: {trigger_reason})...")
-    sensor_data = await get_latest_sensor_from_firebase()
-    if not sensor_data or "reading" not in sensor_data:
-        print("[Scheduler] Chưa có dữ liệu cảm biến mới trên Firebase để phân tích.")
+    """Thực hiện phân tích trực tiếp từ dữ liệu cây trồng & cảm biến đã làm sạch và lưu thẳng vào DB."""
+    print(f"[Scheduler] Đang phân tích khuyến nghị (Lý do: {trigger_reason})...")
+    try:
+        context = await get_current_plant_context(method="ffill")
+    except Exception as e:
+        print(f"[Scheduler] Không thể lấy ngữ cảnh cây trồng: {e}")
         return None
 
-    reading = sensor_data["reading"]
+    reading = context["reading"]
     advice = await get_gemini_agronomy_advice(
-        plant_type="Cây ớt (Chili Pepper)",
-        age_days=45,
-        growth_stage="Ra hoa & tạo quả",
+        plant_type=context["plant_type"],
+        age_days=context["age_days"],
+        growth_stage=context["growth_stage"],
         sensor=reading,
-        custom_notes=f"Phân tích tự động định kỳ - {trigger_reason}"
+        custom_notes=f"Phân tích tự động - {trigger_reason}",
     )
 
     advice_dict = advice.model_dump()
+    advice_dict["plant_type"] = context["plant_type"]
+    advice_dict["age_days"] = context["age_days"]
+    advice_dict["growth_stage"] = context["growth_stage"]
     advice_dict["sensor_snapshot"] = {
-        "timestamp": sensor_data.get("timestamp"),
-        "moisture": reading.get("moisture"),
-        "soiltemp": reading.get("soiltemp"),
-        "pH": reading.get("pH"),
-        "EC": reading.get("EC"),
-        "N": reading.get("N"),
-        "P": reading.get("P"),
-        "K": reading.get("K"),
+        "timestamp": context["timestamp"],
+        **reading,
     }
     advice_dict["trigger_reason"] = trigger_reason
 
-    # Lưu vào Firebase
     saved = await save_recommendation_to_firebase(advice_dict)
     if saved:
-        print(f"[Scheduler] Đã lưu kết quả khuyến nghị mới nhất vào Firebase thành công lúc {datetime.now().strftime('%H:%M:%S')}.")
+        print(
+            f"[Scheduler] Đã lưu khuyến nghị mới nhất (Ngày {context['age_days']} - {context['growth_stage']}) "
+            f"vào DB lúc {datetime.now().strftime('%H:%M:%S')}."
+        )
     return advice_dict
 
+
 async def auto_recommendation_worker():
-    """Vòng lặp chạy ngầm kiểm tra và kích hoạt phân tích theo lịch nông học."""
+    """Vòng lặp chạy ngầm kiểm tra và đồng bộ khuyến nghị với dữ liệu cây trồng thực tế."""
     global _last_auto_run_key
     print("[Scheduler] Worker phân tích tự động IoT Farm đã khởi động.")
-    
-    # 1. Kiểm tra lúc khởi động: Nếu Firebase chưa có khuyến nghị nào thì phân tích ngay
-    try:
-        cached = await get_cached_recommendation_from_firebase()
-        if not cached:
-            print("[Scheduler] Chưa tìm thấy khuyến nghị nào trên Firebase. Tiến hành phân tích khởi tạo...")
-            await run_auto_analysis(trigger_reason="khởi tạo lần đầu")
-    except Exception as e:
-        print(f"[Scheduler] Lỗi khởi tạo ban đầu: {e}")
 
-    # 2. Vòng lặp kiểm tra định kỳ mỗi 10 phút
+    try:
+        context = await get_current_plant_context(method="ffill")
+        cached = await get_cached_recommendation_from_firebase()
+        if _is_cache_outdated(cached, context):
+            print("[Scheduler] Dữ liệu khuyến nghị trong DB chưa khớp với trạng thái cây hiện tại. Đang cập nhật...")
+            await run_auto_analysis(trigger_reason="đồng bộ dữ liệu thực tế")
+    except Exception as e:
+        print(f"[Scheduler] Lỗi kiểm tra khởi tạo ban đầu: {e}")
+
     while True:
         try:
-            await asyncio.sleep(600) # 10 phút
+            await asyncio.sleep(600)
             now = datetime.now()
             current_hour = now.hour
             current_date_str = now.strftime("%Y-%m-%d")
 
-            # 2 mốc giờ vàng nông học: 06:00 sáng (trước ca tưới sáng) và 16:00 chiều (trước ca tưới chiều)
-            is_morning_slot = (current_hour == 6)
-            is_afternoon_slot = (current_hour == 16)
+            is_morning_slot = current_hour == 6
+            is_afternoon_slot = current_hour == 16
 
             run_key = f"{current_date_str}-{current_hour}"
             if (is_morning_slot or is_afternoon_slot) and _last_auto_run_key != run_key:

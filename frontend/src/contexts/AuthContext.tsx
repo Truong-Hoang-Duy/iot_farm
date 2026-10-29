@@ -27,17 +27,12 @@ interface AuthResponse {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<any>(null);  // Thay thế 'any' với kiểu người dùng cụ thể của bạn
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    // Kiểm tra nếu có thông tin người dùng trong localStorage
-    const currentUser = localStorage.getItem('user');
-    if (currentUser) {
-      setUser(JSON.parse(currentUser));
-    }
-    setIsLoading(false);
-  }, []);
+  const [user, setUser] = useState<any>({
+    id: 'admin',
+    email: 'admin@smartfarm.com',
+    name: 'Quản trị viên',
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
   const login = async (email: string, password: string): Promise<AuthResponse> => {
     try {
