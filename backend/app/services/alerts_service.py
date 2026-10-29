@@ -255,6 +255,40 @@ def detect_anomalies(
     return anomalies
 
 
+def detect_predictive_anomalies(stage_number: int) -> List[Dict[str, Any]]:
+    """Phân tích các bất thường được mô hình XGBoost Direct dự báo trong 2 giờ tới (Early Warning theo Slide 21)."""
+    predictive = []
+    try:
+        from app.ml.forecast_service import get_service
+        svc = get_service()
+        fc_m = svc.forecast(target="moisture", horizon="2h", model="xgboost")
+        if fc_m and fc_m.get("forecast"):
+            last_pt = fc_m["forecast"][-1]
+            yhat = last_pt.get("yhat")
+            lo = last_pt.get("lo", yhat)
+            stage_cfg = PLANT_STAGES.get(stage_number, PLANT_STAGES[3])
+            m_target = stage_cfg["targets"].get("moisture", {})
+            t_min = float(m_target.get("min", 60.0))
+            if lo is not None and lo < 45.0:
+                predictive.append(
+                    {
+                        "key": "moisture_predictive_2h",
+                        "label": "Độ ẩm đất dự báo 2h tới (XGBoost Direct)",
+                        "value": round(yhat, 1),
+                        "min": t_min,
+                        "max": float(m_target.get("max", 75.0)),
+                        "unit": "%",
+                        "status": f"Dự báo giảm sâu xuống {yhat:.1f}% (cận dưới an toàn 80% là {lo:.1f}%)",
+                        "delta": f"-{round(t_min - lo, 1)}%",
+                        "is_predictive": True,
+                    }
+                )
+    except Exception:
+        # Safe Fallback: không làm gián đoạn hệ thống nếu ML chưa sẵn sàng
+        pass
+    return predictive
+
+
 def build_alerts_gemini_prompt(
     plant_type: str,
     age_days: int,
@@ -361,7 +395,7 @@ async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[
         except Exception:
             pass
 
-    anomalies = detect_anomalies(reading, stage_number)
+    anomalies = detect_anomalies(reading, stage_number) + detect_predictive_anomalies(stage_number)
     prompt = build_alerts_gemini_prompt(
         plant_type=plant_type,
         age_days=age_days,

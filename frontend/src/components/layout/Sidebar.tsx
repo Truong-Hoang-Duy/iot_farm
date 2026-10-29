@@ -20,13 +20,16 @@ import {
 import { cn, formatDateTimeVN } from '@/lib/utils';
 import { DeviceOnlineIndicator } from '@/components/layout/DeviceOnlineIndicator';
 
+// Cờ hiển thị tab "Dự báo & Model" (tạm ẩn theo yêu cầu, khi cần bật lại chỉ cần đổi thành true)
+const SHOW_MODEL_LAB_TAB = false;
+
 const navigation = [
   { name: 'Tổng quan', href: '/', icon: LayoutDashboard },
   { name: 'Thông tin cây trồng', href: '/plant', icon: Leaf },
   { name: 'Thời tiết', href: '/weather', icon: CloudSun },
   { name: 'Cảnh báo', href: '/alerts', icon: AlertTriangle },
   { name: 'Điều khiển', href: '/controls', icon: Power },
-  { name: 'Dự báo & Model', href: '/model-lab', icon: LineChart },
+  ...(SHOW_MODEL_LAB_TAB ? [{ name: 'Dự báo & Model', href: '/model-lab', icon: LineChart }] : []),
   { name: 'Khuyến nghị', href: '/recommendations', icon: BookOpen },
   { name: 'Nhật ký thiết bị', href: '/logs', icon: ScrollText },
   { name: 'Cài đặt', href: '/settings', icon: Settings },

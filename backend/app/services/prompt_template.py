@@ -17,13 +17,16 @@ Lưu ý ngôn ngữ: Sử dụng tiếng Việt tự nhiên, không chèn thuậ
 5. Ngưỡng tham chiếu chuẩn nông học cây ớt:
    - Ẩm độ đất: 60% - 75% | Nhiệt độ đất: 22°C - 28°C
    - pH đất: 6.0 - 6.8 | EC đất: 1.2 - 2.0 mS/cm
-   - N-P-K tối ưu: N: 150 - 250 ppm | P: 400 - 700 ppm | K: 600 - 1000 ppm
+    - N-P-K tối ưu: N: 150 - 250 ppm | P: 400 - 700 ppm | K: 600 - 1000 ppm
+6. Ra quyết định dự báo chủ động (Closed-Loop Predictive Action từ XGBoost Direct):
+   - Nếu mô hình dự báo chuỗi thời gian XGBoost Direct cảnh báo độ ẩm đất sẽ giảm dưới 45% (hoặc cận an toàn q10 dưới 45%) trong 1 - 2 giờ tới: HÃY chủ động đưa khuyến nghị kích hoạt tưới nhỏ giọt đón đầu ngay trước khi rễ bị khô hạn để bảo vệ cây ớt khỏi sốc nhiệt/sốc hạn và rụng hoa.
+   - Nếu độ ẩm dự kiến tăng hoặc duy trì tối ưu (60% - 75%): Khuyến nghị giữ nguyên nhịp tưới hoặc tạm hoãn để rễ thoáng khí, tránh nấm bệnh thối rễ.
 
 Yêu cầu định dạng đầu ra:
 Bạn BẮT BUỘC phản hồi DUY NHẤT một chuỗi JSON hợp lệ (không kèm markdown ```json, không kèm lời dẫn), tuân thủ đúng cấu trúc:
 {
   "soil_health_score": <số nguyên từ 0 đến 100>,
-  "summary": "<Tối đa 2 câu ngắn gọn nêu rõ tình trạng sinh lý cây ớt hiện tại dựa trên số liệu cảm biến và hành động cấp bách. KHÔNG lặp lại tên cây, tuổi cây hay số điểm>",
+  "summary": "<Tối đa 2 câu ngắn gọn nêu rõ tình trạng sinh lý cây ớt hiện tại dựa trên số liệu cảm biến, động thái dự báo và hành động cấp bách. KHÔNG lặp lại tên cây, tuổi cây hay số điểm>",
   "fertilizer_plan": [
     {
       "name": "<Tên loại phân bằng tiếng Việt viết hoa chữ cái đầu, ví dụ: Kali sunfat, Đạm hữu cơ, Phân bón lá canxi - bo, Vôi nông nghiệp...>",
@@ -33,7 +36,7 @@ Bạn BẮT BUỘC phản hồi DUY NHẤT một chuỗi JSON hợp lệ (không
       "purpose": "<Tác động sinh lý lên cây ớt, 1 câu>"
     }
   ],
-  "watering_advice": "<Khuyến nghị tưới nước cụ thể: Khung giờ, lượng nước bù ẩm tránh sốc nhiệt làm rụng hoa>",
+  "watering_advice": "<Khuyến nghị tưới nước cụ thể: Khung giờ, lượng nước bù ẩm đón đầu tránh sốc nhiệt làm rụng hoa>",
   "pest_disease_warnings": [
     "<Cảnh báo bọ trĩ, nhện trắng, rệp muội, nấm héo rũ hoặc thán thư kèm cách xử lý sinh học, không kèm tên khoa học tiếng Anh>"
   ],
@@ -48,7 +51,8 @@ def build_agronomy_prompt(
     age_days: int,
     growth_stage: str,
     sensor: Dict[str, Any],
-    custom_notes: str | None = None
+    custom_notes: str | None = None,
+    forecast_data: Dict[str, Any] | None = None
 ) -> str:
     prompt = f"""
 Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
@@ -65,6 +69,12 @@ Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
   + Hàm lượng Kali (K): {sensor.get('K', 'N/A')} ppm
   + Nhiệt độ không khí: {sensor.get('temperature', 'N/A')}°C
   + Độ ẩm không khí: {sensor.get('humidity', 'N/A')}%
+"""
+    if forecast_data:
+        prompt += f"""- Động thái dự báo thời gian thực từ mô hình XGBoost Direct:
+  + Độ ẩm đất dự kiến 2 giờ tới: {forecast_data.get('moisture_yhat', 'N/A')}% (khoảng tin cậy 80%: {forecast_data.get('moisture_lo', 'N/A')}% - {forecast_data.get('moisture_hi', 'N/A')}%, xu hướng: {forecast_data.get('moisture_trend', 'ổn định')})
+  + Nhiệt độ đất dự kiến 2 giờ tới: {forecast_data.get('soiltemp_yhat', 'N/A')}°C
+  + Nhận định vi khí hậu: {forecast_data.get('risk_note', 'Bình thường')}
 """
     if custom_notes:
         prompt += f"- Ghi chú của nông dân: {custom_notes}\n"

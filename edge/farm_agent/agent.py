@@ -208,7 +208,8 @@ class FarmAgent(object):
                     "last_seen": SERVER_TIMESTAMP,
                     "device_time": int(time.time()),
                     "queue_pending": self.queue.count(),
-                    "network_ok": True,
+                    "network_ok": False,
+                    "ntp_synced": False,
                 }, timeout=4)
         except Exception as e:  # noqa: BLE001
             log.debug("Không gửi được trạng thái offline: %s", e)

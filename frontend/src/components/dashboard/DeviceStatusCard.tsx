@@ -40,7 +40,14 @@ const sensorHealthConfig: Record<SensorHealth, { label: string; className: strin
   simulated: { label: 'Mô phỏng', className: 'bg-accent/10 text-accent border-accent/20' },
 };
 
-function SensorHealthBadge({ value }: { value?: string }) {
+function SensorHealthBadge({ value, isOnline = true }: { value?: string; isOnline?: boolean }) {
+  if (!isOnline) {
+    return (
+      <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium bg-destructive/10 text-destructive border-destructive/20">
+        Ngoại tuyến
+      </span>
+    );
+  }
   const config = value && value in sensorHealthConfig ? sensorHealthConfig[value as SensorHealth] : null;
   return (
     <span
@@ -171,10 +178,16 @@ export function DeviceStatusCard({ deviceId, className, liveState }: DeviceStatu
           {sinceLastSeenMs !== null ? formatRelativeVi(sinceLastSeenMs) : '--'}
         </span>
         {lastSeen !== null && <span>({formatEpochMsVi(lastSeen)})</span>}
-        {!online && <span className="text-destructive">· Ngoại tuyến khi quá {thresholdSec} giây không có heartbeat</span>}
+        {!online && (
+          <span className="text-destructive font-medium">
+            {status.online === false
+              ? '· Thiết bị đã ngắt kết nối / dừng hoạt động'
+              : `· Ngoại tuyến do quá ${thresholdSec} giây không có heartbeat`}
+          </span>
+        )}
       </p>
 
-      <div className={cn('grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-5', !online && 'opacity-75')}>
+      <div className={cn('grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-5', !online && 'opacity-85')}>
         <InfoItem icon={Server} label="Hostname / IP">
           {status.hostname || '--'}
           <span className="block text-xs font-normal text-muted-foreground truncate">{status.ip || '--'}</span>
@@ -189,88 +202,157 @@ export function DeviceStatusCard({ deviceId, className, liveState }: DeviceStatu
           <span className={cn((status.queue_pending ?? 0) > 0 && 'text-warning')}>
             {typeof status.queue_pending === 'number' ? `${status.queue_pending} bản ghi` : '--'}
           </span>
-          <span className="block text-xs font-normal text-muted-foreground">chờ gửi lên Firebase</span>
+          <span className="block text-xs font-normal text-muted-foreground">
+            {!online ? 'lưu cục bộ trên thiết bị' : 'chờ gửi lên Firebase'}
+          </span>
         </InfoItem>
         <InfoItem icon={Clock} label="Đồng bộ giờ NTP">
-          <span className={status.ntp_synced ? 'text-success' : 'text-warning'}>
-            {status.ntp_synced === undefined ? '--' : status.ntp_synced ? 'Đã đồng bộ' : 'Chưa đồng bộ'}
+          <span className={!online ? 'text-destructive' : status.ntp_synced ? 'text-success' : 'text-warning'}>
+            {!online
+              ? 'Mất đồng bộ'
+              : status.ntp_synced === undefined
+              ? '--'
+              : status.ntp_synced
+              ? 'Đã đồng bộ'
+              : 'Chưa đồng bộ'}
           </span>
           <span className="block text-xs font-normal text-muted-foreground">
-            Lệch: {offsetMs !== null ? `${offsetMs.toFixed(0)} ms` : '--'}
+            {!online
+              ? (offsetMs !== null ? `Lệch trước đó: ${offsetMs.toFixed(0)} ms` : 'Ngoại tuyến')
+              : (offsetMs !== null ? `Lệch: ${offsetMs.toFixed(0)} ms` : '--')}
           </span>
         </InfoItem>
-        <InfoItem icon={status.network_ok === false ? WifiOff : Wifi} label="Mạng">
-          <span className={status.network_ok === false ? 'text-destructive' : status.network_ok ? 'text-success' : ''}>
-            {status.network_ok === undefined ? '--' : status.network_ok ? 'Kết nối tốt' : 'Mất kết nối'}
+        <InfoItem icon={!online || status.network_ok === false ? WifiOff : Wifi} label="Mạng">
+          <span className={!online || status.network_ok === false ? 'text-destructive' : 'text-success'}>
+            {!online
+              ? 'Mất kết nối'
+              : status.network_ok === undefined
+              ? '--'
+              : status.network_ok
+              ? 'Kết nối tốt'
+              : 'Mất kết nối'}
           </span>
+          {!online && (
+            <span className="block text-xs font-normal text-muted-foreground">Thiết bị ngoại tuyến</span>
+          )}
         </InfoItem>
         <InfoItem icon={FlaskConical} label="Cảm biến đất (CWT 7in1)">
-          <SensorHealthBadge value={status.sensors?.soil} />
+          <SensorHealthBadge value={status.sensors?.soil} isOnline={online} />
+          {!online && status.sensors?.soil && (
+            <span className="block text-xs font-normal text-muted-foreground">
+              (Trước đó: {sensorHealthConfig[status.sensors.soil as SensorHealth]?.label ?? status.sensors.soil})
+            </span>
+          )}
         </InfoItem>
         <InfoItem icon={Droplets} label="Cảm biến DHT20">
-          <SensorHealthBadge value={status.sensors?.dht20} />
+          <SensorHealthBadge value={status.sensors?.dht20} isOnline={online} />
+          {!online && status.sensors?.dht20 && (
+            <span className="block text-xs font-normal text-muted-foreground">
+              (Trước đó: {sensorHealthConfig[status.sensors.dht20 as SensorHealth]?.label ?? status.sensors.dht20})
+            </span>
+          )}
         </InfoItem>
         <InfoItem icon={Thermometer} label="Nhiệt độ CPU">
           <span className={cn((status.cpu_temp_c ?? 0) >= 70 && 'text-destructive')}>
             {typeof status.cpu_temp_c === 'number' ? `${status.cpu_temp_c.toFixed(1)} °C` : '--'}
           </span>
+          {!online && typeof status.cpu_temp_c === 'number' && (
+            <span className="block text-xs font-normal text-muted-foreground">(khi ngắt)</span>
+          )}
         </InfoItem>
         <InfoItem icon={Activity} label="Thời gian chạy">
           {typeof status.uptime_s === 'number' ? formatDurationVi(status.uptime_s) : '--'}
+          {!online && typeof status.uptime_s === 'number' && (
+            <span className="block text-xs font-normal text-muted-foreground">(khi ngắt)</span>
+          )}
         </InfoItem>
         <InfoItem icon={Clock} label="Giờ trên thiết bị">
           {typeof status.device_time === 'number' ? formatEpochMsVi(status.device_time * 1000) : '--'}
+          {!online && typeof status.device_time === 'number' && (
+            <span className="block text-xs font-normal text-muted-foreground">(thời điểm ngắt)</span>
+          )}
         </InfoItem>
       </div>
 
       {live && (
-        <div className="mt-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <div
+          className={cn(
+            'mt-4 rounded-xl border p-3 transition-colors',
+            online
+              ? 'border-primary/20 bg-primary/5'
+              : 'border-destructive/20 bg-destructive/5 opacity-85',
+          )}
+        >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground mb-2">
-            <span className="inline-flex items-center gap-1.5 font-medium text-primary">
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 font-medium',
+                online ? 'text-primary' : 'text-destructive',
+              )}
+            >
               <Wind className="h-3.5 w-3.5" />
-              Thông số trực tiếp từ mạch (Live)
+              Thông số trực tiếp từ mạch {online ? '(Live)' : '(Tạm dừng – Thiết bị ngoại tuyến)'}
             </span>
-            <span>
-              {live.source ? `${liveSourceLabel[live.source] ?? live.source} · ` : ''}
-              {sinceLiveMs !== null ? formatRelativeVi(sinceLiveMs) : '--'}
-              {typeof live.updated_at === 'number' ? ` (${formatEpochMsVi(live.updated_at)})` : ''}
-            </span>
+            <div className="flex items-center gap-2">
+              {!online && (
+                <span className="inline-flex items-center rounded-full bg-destructive/10 text-destructive border border-destructive/20 px-2 py-0.5 text-[11px] font-medium">
+                  Dữ liệu đo lần cuối
+                </span>
+              )}
+              <span>
+                {online && live.source ? `${liveSourceLabel[live.source] ?? live.source} · ` : ''}
+                {sinceLiveMs !== null ? formatRelativeVi(sinceLiveMs) : '--'}
+                {typeof live.updated_at === 'number' ? ` (${formatEpochMsVi(live.updated_at)})` : ''}
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-sm">
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">Nhiệt độ KK</span>
-              <span className="font-semibold">
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
                 {typeof live.temperature === 'number' ? `${live.temperature.toFixed(1)} °C` : '--'}
               </span>
             </div>
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">Độ ẩm KK</span>
-              <span className="font-semibold">
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
                 {typeof live.humidity === 'number' ? `${live.humidity.toFixed(1)} %` : '--'}
               </span>
             </div>
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">Nhiệt độ đất</span>
-              <span className="font-semibold">
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
                 {typeof live.soiltemp === 'number' ? `${live.soiltemp.toFixed(1)} °C` : '--'}
               </span>
             </div>
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">Độ ẩm đất</span>
-              <span className="font-semibold">
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
                 {typeof live.moisture === 'number' ? `${live.moisture.toFixed(1)} %` : '--'}
               </span>
             </div>
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">Độ pH</span>
-              <span className="font-semibold">{typeof live.pH === 'number' ? live.pH.toFixed(2) : '--'}</span>
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
+                {typeof live.pH === 'number' ? live.pH.toFixed(2) : '--'}
+              </span>
             </div>
             <div className="rounded-lg bg-background/80 px-2.5 py-1.5">
               <span className="text-xs text-muted-foreground block">EC / N-P-K</span>
-              <span className="font-semibold">
+              <span className={cn('font-semibold', !online && 'text-muted-foreground')}>
                 {typeof live.EC === 'number' ? `${live.EC.toFixed(2)} mS` : '--'}
               </span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {status.last_error && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="font-medium text-destructive">Lỗi gần nhất</p>
+            <p className="text-muted-foreground break-words">{status.last_error}</p>
           </div>
         </div>
       )}

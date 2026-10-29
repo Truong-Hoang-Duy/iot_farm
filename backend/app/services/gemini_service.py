@@ -23,9 +23,10 @@ def generate_rule_based_fallback(
     plant_type: str,
     age_days: int,
     growth_stage: str,
-    sensor: Dict[str, Any]
+    sensor: Dict[str, Any],
+    forecast_data: Dict[str, Any] | None = None
 ) -> AdvisorResponse:
-    """Bộ suy diễn nông học theo chuẩn sinh lý cây ớt và giai đoạn thực tế."""
+    """Bộ suy diễn nông học theo chuẩn sinh lý cây ớt, kết hợp dự báo XGBoost và giai đoạn thực tế."""
     moisture = float(sensor.get("moisture", 50.0) or 50.0)
     pH = float(sensor.get("pH", 6.2) or 6.2)
     ec = float(sensor.get("EC", 1.2) or 1.2)
@@ -37,6 +38,19 @@ def generate_rule_based_fallback(
     warnings: List[str] = []
     tips: List[str] = []
     plan: List[FertilizerItem] = []
+
+    # Kiểm tra dự báo sớm từ mô hình XGBoost Direct (đóng vòng điều khiển theo Slide 21)
+    fc_warn = None
+    if forecast_data:
+        m_lo = forecast_data.get("moisture_lo")
+        m_yhat = forecast_data.get("moisture_yhat")
+        if (m_lo is not None and m_lo < 45.0) or (m_yhat is not None and m_yhat < 45.0):
+            fc_warn = (
+                f"Dự báo XGBoost Direct: Độ ẩm đất dự kiến giảm xuống {m_yhat:.1f}% "
+                f"(cận an toàn 80% là {m_lo:.1f}%) trong 2 giờ tới. Hệ thống kích hoạt khuyến nghị tưới nhỏ giọt đón đầu "
+                f"trước khi vùng rễ rơi vào trạng thái sốc hạn."
+            )
+            warnings.append(fc_warn)
 
     if moisture < 45:
         score -= 20
@@ -50,10 +64,16 @@ def generate_rule_based_fallback(
         )
     elif moisture < 60:
         score -= 10
-        watering = (
-            f"Độ ẩm đất hiện đạt {moisture:.1f}%, thấp hơn khoảng tối ưu (60% - 75%) của giai đoạn {growth_stage.lower()}. "
-            "Nên tưới bổ sung 1.5 - 2.0 lít/gốc vào lúc 06:30 sáng và 16:30 chiều để duy trì trao đổi chất vùng rễ."
-        )
+        if fc_warn:
+            watering = (
+                f"Độ ẩm đất hiện đạt {moisture:.1f}% và XGBoost dự báo sẽ giảm xuống {forecast_data.get('moisture_yhat')}%. "
+                f"Cần kích hoạt chu kỳ tưới đón đầu 1.5 - 2.0 lít/gốc ngay để giữ độ ẩm ổn định trong ngưỡng 60% - 75%."
+            )
+        else:
+            watering = (
+                f"Độ ẩm đất hiện đạt {moisture:.1f}%, thấp hơn khoảng tối ưu (60% - 75%) của giai đoạn {growth_stage.lower()}. "
+                "Nên tưới bổ sung 1.5 - 2.0 lít/gốc vào lúc 06:30 sáng và 16:30 chiều để duy trì trao đổi chất vùng rễ."
+            )
         warnings.append(
             f"Độ ẩm đất dưới 60% ({moisture:.1f}%) dễ tạo điều kiện cho bọ trĩ và rệp muội phát triển ở mặt dưới lá. "
             "Phun phòng bằng dầu khoáng sinh học hoặc chế phẩm thảo mộc vào chiều mát."
@@ -178,6 +198,55 @@ def generate_rule_based_fallback(
     )
 
 
+def get_xgboost_forecast_summary() -> Dict[str, Any] | None:
+    """Trích xuất kết quả dự báo 2 giờ tới từ mô hình XGBoost Direct tốt nhất (Safe Fallback nếu lỗi)."""
+    try:
+        from app.ml.forecast_service import get_service
+        svc = get_service()
+        fc_m = svc.forecast(target="moisture", horizon="2h", model="xgboost")
+        fc_t = svc.forecast(target="soiltemp", horizon="2h", model="xgboost")
+        if not fc_m or not fc_m.get("forecast"):
+            return None
+        last_m = fc_m["forecast"][-1]
+        last_t = fc_t["forecast"][-1] if fc_t and fc_t.get("forecast") else {}
+        yhat_m = last_m.get("yhat")
+        lo_m = last_m.get("lo", yhat_m)
+        hi_m = last_m.get("hi", yhat_m)
+        yhat_t = last_t.get("yhat")
+
+        hist = fc_m.get("history", [])
+        curr_m = hist[-1]["v"] if hist and hist[-1].get("v") is not None else yhat_m
+        diff = (yhat_m - curr_m) if (yhat_m is not None and curr_m is not None) else 0.0
+        if diff < -1.5:
+            trend = "giảm nhanh"
+        elif diff < -0.5:
+            trend = "giảm nhẹ"
+        elif diff > 1.5:
+            trend = "tăng nhanh"
+        elif diff > 0.5:
+            trend = "tăng nhẹ"
+        else:
+            trend = "ổn định"
+
+        risk_note = "Bình thường"
+        if lo_m is not None and lo_m < 45.0:
+            risk_note = "Nguy cơ đất khô hạn trong 2 giờ tới (cận dưới q10 < 45%). Cần tưới đón đầu."
+        elif yhat_m is not None and yhat_m > 80.0:
+            risk_note = "Nguy cơ độ ẩm quá bão hòa > 80%. Tạm hoãn tưới."
+
+        return {
+            "moisture_yhat": round(yhat_m, 1) if yhat_m is not None else None,
+            "moisture_lo": round(lo_m, 1) if lo_m is not None else None,
+            "moisture_hi": round(hi_m, 1) if hi_m is not None else None,
+            "moisture_trend": trend,
+            "soiltemp_yhat": round(yhat_t, 1) if yhat_t is not None else None,
+            "risk_note": risk_note,
+        }
+    except Exception as e:
+        # Cơ chế kháng lỗi (Safe Fallback): nếu ML chưa sẵn sàng, hệ thống vẫn hoạt động bình thường
+        return None
+
+
 async def get_gemini_agronomy_advice(
     plant_type: str,
     age_days: int,
@@ -185,16 +254,20 @@ async def get_gemini_agronomy_advice(
     sensor: Dict[str, Any],
     custom_notes: str | None = None
 ) -> AdvisorResponse:
-    """Gọi Google Gemini để sinh đề xuất phân bón & chăm sóc theo dữ liệu cây trồng thực tế."""
+    """Gọi Google Gemini để sinh đề xuất phân bón & chăm sóc kết hợp dự báo XGBoost Direct."""
+    forecast_data = get_xgboost_forecast_summary()
+
     if not is_gemini_configured():
-        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor)
+        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, forecast_data)
 
     try:
         from google import genai
         from google.genai import types
 
         client = genai.Client(api_key=GEMINI_API_KEY)
-        user_prompt = build_agronomy_prompt(plant_type, age_days, growth_stage, sensor, custom_notes)
+        user_prompt = build_agronomy_prompt(
+            plant_type, age_days, growth_stage, sensor, custom_notes, forecast_data
+        )
 
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -228,7 +301,7 @@ async def get_gemini_agronomy_advice(
 
     except Exception as e:
         print(f"[IoTFarmService] Lỗi gọi API phân tích: {e}. Chuyển sang bộ suy diễn nông học.")
-        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor)
+        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, forecast_data)
 
 
 async def chat_with_gemini(

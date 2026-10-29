@@ -1,12 +1,11 @@
 {
- "state": "done",
- "stage": "done",
- "progress": 1.0,
- "quick": false,
- "pid": 38684,
- "started_at": "2026-10-29T13:22:01+07:00",
- "updated_at": "2026-10-29T13:45:33+07:00",
- "message": "finished in 1411.4s",
- "error": null,
- "finished_at": "2026-10-29T13:45:33+07:00"
+ "state": "error",
+ "stage": "error",
+ "progress": 0.172,
+ "quick": true,
+ "pid": 79902,
+ "started_at": "2026-10-29T22:28:00+07:00",
+ "updated_at": "2026-10-29T22:28:19+07:00",
+ "message": "failed: No module named 'xgboost'",
+ "error": "Traceback (most recent call last):\n  File \"/Users/truonghoangduy/Documents/Project/IOT/iot_farm/backend/app/ml/train.py\", line 316, in run\n    info = mdl.fit(gd, final=False)\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/truonghoangduy/Documents/Project/IOT/iot_farm/backend/app/ml/models.py\", line 181, in fit\n    import xgboost as xgb\nModuleNotFoundError: No module named 'xgboost'\n"
 }
