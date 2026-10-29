@@ -25,7 +25,11 @@
    - **Chữ cực kỳ ngắn gọn:** Ưu tiên bullet point 1 dòng, từ khóa in đậm, tránh đoạn văn dài.
    - Thẻ bo tròn góc (`Rounded Rectangle`, radius 12–16px), đổ bóng mờ nhẹ (`Soft Shadow`).
    - Mỗi slide đều đi kèm **Speaker Notes (Lời thoại thuyết trình chi tiết)** để diễn giả dễ dàng trình bày.
-4. **Logo chính thức:**
+4. **Quy tắc quan trọng: KHÔNG in tên file mã nguồn lên mặt slide:**
+   - Tuyệt đối không để lộ các tên file lập trình như `soil_all.json`, `sensor_processing_service.py`, đuôi `.py`, `.json`, `.csv` trên bề mặt slide trình chiếu.
+   - Thay thế bằng các danh xưng học thuật chuyên nghiệp (ví dụ: *"Tập dữ liệu quan trắc ngoại tuyến"*, *"Module tiền xử lý dữ liệu Backend"*).
+   - Tên file ảnh chỉ phục vụ code chèn hình ảnh, không in chữ tên file ảnh lên slide.
+5. **Logo chính thức:**
    - Thay thế/chèn lại logo chính thức của trường **UIT** (`report/images/logo_uit.png`) ở góc trên bên phải của Slide 1 (Bìa) và Slide 24 (Cảm ơn). Tuyệt đối không chèn logo phụ.
 
 ---
@@ -126,19 +130,19 @@
 
 ---
 
-### SLIDE 7: NGUỒN GỐC DỮ LIỆU & BẢN LƯU OFFLINE SOIL_ALL.JSON
+### SLIDE 7: NGUỒN GỐC DỮ LIỆU & LƯU TRỮ QUAN TRẮC NGOẠI TUYẾN
 - **Tiêu đề:** `Nguồn Dữ liệu Quan trắc Thực tế`
 - **Bố cục 2 khối đối xứng:**
   - **Khối 1: Thu thập trực tiếp từ Firebase Realtime Database:**
     - Cảm biến ghi dữ liệu định kỳ 5 phút/lần theo thời gian thực.
-    - Cấu trúc JSON 3 cấp phân tầng khoa học: `data[YYYY-MM-DD][HH:MM]`.
+    - Cấu trúc dữ liệu JSON 3 cấp phân tầng khoa học: `data[YYYY-MM-DD][HH:MM]`.
     - Dữ liệu nguyên bản gồm toàn bộ các mốc đo thực địa ngoài vườn.
-  - **Khối 2: Bản trích xuất & lưu trữ offline (`soil_all.json`):**
-    - Đồng bộ thành file cục bộ `soil_all.json` đặt trong thư mục hệ thống.
+  - **Khối 2: Trích xuất & Lưu trữ Dữ liệu Ngoại tuyến:**
+    - Đồng bộ thành cơ sở dữ liệu quan trắc ngoại tuyến phục vụ nghiên cứu.
     - Chuỗi thời gian liên tục, làm nền tảng cho EDA, mô phỏng thuật toán và phát lại (Replay).
-    - Phục vụ kiểm thử offline và huấn luyện mô hình dự báo không phụ thuộc kết nối mạng.
+    - Phục vụ kiểm thử ngoại tuyến và huấn luyện mô hình dự báo không phụ thuộc kết nối mạng.
 - **Speaker Notes:**  
-  *"Toàn bộ dữ liệu của đề tài được lấy trực tiếp từ Firebase Realtime Database theo cấu trúc ngày và giờ, sau đó được trích xuất và lưu trữ cục bộ thành file soil_all.json để phục vụ phân tích EDA chuyên sâu và kiểm thử thuật toán."*
+  *"Toàn bộ dữ liệu của đề tài được lấy trực tiếp từ Firebase Realtime Database theo cấu trúc ngày và giờ, sau đó được trích xuất và lưu trữ thành tập dữ liệu ngoại tuyến chuẩn để phục vụ phân tích EDA chuyên sâu và kiểm thử thuật toán."*
 
 ---
 
@@ -246,10 +250,10 @@
   - **Forward Fill (ffill):** MAE Test = **`0.3429`** | Test $R^2$ = **`0.9394`** $\rightarrow$ **Tối ưu nhất nhờ giữ tính nhân quả của chuỗi thời gian**.
   - **KNN Imputation:** MAE Test = `0.3540` | Phù hợp khi phân tích ngoại tuyến.
   - **Median Imputation:** MAE Test = `0.3479` | Baseline cơ sở.
-- **Triển khai thực tế tại Backend (`sensor_processing_service.py`):**
-  - Tự động gọi hàm `impute_and_clean_dataframe()`: ffill bù khuyết, Z-score/IQR capping tùy chọn, làm trơn rolling 1 giờ và chia nhóm 6 giai đoạn phát triển cây ớt.
+- **Triển khai thực tế tại Backend (Module Tiền Xử Lý Dữ Liệu):**
+  - Tự động thực thi pipeline làm sạch: ffill bù khuyết theo tính nhân quả, Z-score/IQR capping tùy chọn, làm trơn rolling 1 giờ và chia nhóm 6 giai đoạn phát triển cây ớt.
 - **Speaker Notes:**  
-  *"Kết quả benchmark chứng minh phương pháp Forward-fill cho sai số MAE thấp nhất trên tập kiểm thử, chỉ 0.3429. Toàn bộ logic làm sạch và phân nhóm giai đoạn sinh trưởng này đã được lập trình trực tiếp trong backend FastAPI của dự án."*
+  *"Kết quả benchmark chứng minh phương pháp Forward-fill cho sai số MAE thấp nhất trên tập kiểm thử, chỉ 0.3429. Toàn bộ logic làm sạch và phân nhóm giai đoạn sinh trưởng này đã được lập trình đóng gói hoàn chỉnh trong module tiền xử lý dữ liệu của backend FastAPI."*
 
 ---
 
@@ -364,13 +368,17 @@ A. QUY CHUẨN THIẾT KẾ & HÌNH THỨC:
 2. MÃ MÀU GỐC: Nền slide #F8F8F8, chữ chính #000000 và #1B4332, màu nhấn chính #22816F (Forest Teal), màu thẻ #7BBB91 và #C2DDC8, màu đất #693307, màu cảnh báo đỏ #D9534F.
 3. BỐ CỤC CHỮ: Cực kỳ ngắn gọn, dùng bullet point 1 dòng, từ khóa in đậm, khoảng cách thoáng đãng, tuyệt đối không để chữ dài dòng trên slide.
 4. SPEAKER NOTES: TẤT CẢ các slide từ Slide 1 đến Slide 24 BẮT BUỘC phải ghi chú lời thoại thuyết trình (Speaker Notes) chi tiết để diễn giả đọc và thuyết trình.
-5. LOGO UIT: Chèn lại logo UIT mới từ file "report/images/logo_uit.png" ở góc trên bên phải Slide 1 (Bìa) và Slide 24 (Cảm ơn). Tuyệt đối không chèn logo phụ nào khác.
-6. THÔNG TIN GIẢNG VIÊN: "Giảng viên hướng dẫn: TS. Võ Phương Bình".
+5. TUYỆT ĐỐI KHÔNG HIỂN THỊ TÊN FILE MÃ NGUỒN TRÊN MẶT SLIDE:
+   - Nghiêm cấm in các tên file kỹ thuật như "soil_all.json", "sensor_processing_service.py", ".py", ".json", ".csv" lên bề mặt slide.
+   - Thay thế bằng các danh từ kỹ thuật học thuật trang trọng (ví dụ: "Tập dữ liệu quan trắc ngoại tuyến", "Module tiền xử lý dữ liệu Backend", v.v.).
+   - Tên file ảnh (ví dụ 01_monthly_observations_and_missing_rate.png) CHỈ dùng trong code để chỉ định ảnh cần chèn, TUYỆT ĐỐI không in tên file ảnh dưới dạng chữ/caption lên mặt slide!
+6. LOGO UIT: Chèn lại logo UIT mới từ file "report/images/logo_uit.png" ở góc trên bên phải Slide 1 (Bìa) và Slide 24 (Cảm ơn). Tuyệt đối không chèn logo phụ nào khác.
+7. THÔNG TIN GIẢNG VIÊN: "Giảng viên hướng dẫn: TS. Võ Phương Bình".
 
 B. NỘI DUNG ĐIỀU CHỈNH CHÍNH XÁC THEO MÃ NGUỒN IOT_FARM:
 1. Slide 4: Sửa lại câu từ cho đúng: "Quan trắc 9 chỉ số lý hóa đất và môi trường không khí" (không dùng 10 chỉ số, không dùng vi khí hậu tán lá rườm rà).
 2. Slide 5: Tạo khung Video Placeholder tỉ lệ 16:9 với icon Play ▶ và ghi nội dung chuẩn xác: "Video tổng quan hệ thống" (thời lượng ~1 phút), bên cạnh có 3 gạch đầu dòng ngắn về Thực địa, RS485 Modbus và Dashboard.
-3. Slide 7: Tập trung nói về nguồn dữ liệu thu thập trực tiếp từ Firebase Realtime Database và được trích xuất lưu offline tại "soil_all.json" (xóa bỏ hoàn toàn soil_extended.csv và dữ liệu mở rộng ngoài lề).
+3. Slide 7: Tập trung nói về nguồn dữ liệu thu thập trực tiếp từ Firebase Realtime Database và được trích xuất lưu trữ thành "Tập dữ liệu quan trắc ngoại tuyến" (tuyệt đối không in tên file soil_all.json hay đuôi file .json, .csv lên mặt slide).
 4. Slide 8: Chỉ trình bày đúng 9 chỉ số cảm biến (cột light đã bị xóa hoàn toàn khỏi hệ thống):
    - Môi trường không khí (2 chỉ số): temperature, humidity.
    - Đặc tính lý hóa & dinh dưỡng đất (7 chỉ số): soiltemp, moisture, pH, EC, N, P, K.
@@ -384,7 +392,7 @@ B. NỘI DUNG ĐIỀU CHỈNH CHÍNH XÁC THEO MÃ NGUỒN IOT_FARM:
    - Bộ lọc Hampel thích ứng (cửa sổ 9 bước, k=6.0*MAD) lọc xung nhiễu spike.
    - Cơ chế bảo vệ bón phân (Consensus Protection): Khi EC và NPK cùng tăng vọt -> Giữ nguyên sự kiện bón phân thật.
    - Benchmark tiền xử lý: Forward-fill (ffill) đạt MAE test 0.3429 (tốt nhất).
-   - Triển khai thực tế trong backend FastAPI: file sensor_processing_service.py.
+   - Triển khai thực tế trong backend FastAPI: Module tiền xử lý dữ liệu Backend (tuyệt đối không in tên file sensor_processing_service.py lên slide).
 7. Slide 17 - 19 (Pipeline):
    - Giới thiệu cảm biến 7-in-1 Modbus RTU.
    - Nêu sự cố thực tế: Ban đầu dùng ESP32 nhưng gặp mưa ngập ngoài trời bị chập hỏng bo mạch -> Nhóm đã nâng cấp lên NVIDIA Jetson Nano đặt trong hộp IP67 kiên cố.
