@@ -7,10 +7,12 @@ import { componentTagger } from "lovable-tagger";
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    // Cổng 8080 nằm trong dải cổng Windows/Hyper-V thường giữ (8009-9008) nên mặc định dùng 5173.
+    // Đổi bằng biến môi trường VITE_PORT (vd: VITE_PORT=8080 npm run dev).
+    port: Number(process.env.VITE_PORT) || 5173,
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
+        target: process.env.VITE_BACKEND_URL || "http://localhost:8000",
         changeOrigin: true,
       },
     },

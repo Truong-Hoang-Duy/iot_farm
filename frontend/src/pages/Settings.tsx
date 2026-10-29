@@ -9,6 +9,8 @@ import { db } from '@/config/firebaseConfig';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import { PLANT_TYPE_OPTIONS } from '@/data/plantGrowthData';
+import { SamplingIntervalCard } from '@/components/settings/SamplingIntervalCard';
+import { describeFirebaseError } from '@/lib/firebaseErrors';
 import {
   Select,
   SelectContent,
@@ -130,7 +132,7 @@ export default function SettingsPage() {
       console.error('[Settings] Error saving settings:', error);
       toast({
         title: "Lỗi",
-        description: "Không thể lưu cài đặt",
+        description: `Không thể lưu cài đặt. ${describeFirebaseError(error)}`,
         variant: "destructive",
       });
     } finally {
@@ -154,7 +156,7 @@ export default function SettingsPage() {
       console.error('[Settings] Error saving plant age:', error);
       toast({
         title: "Lỗi",
-        description: "Không thể cập nhật số ngày trồng",
+        description: `Không thể cập nhật số ngày trồng. ${describeFirebaseError(error)}`,
         variant: "destructive",
       });
     } finally {
@@ -181,7 +183,7 @@ export default function SettingsPage() {
       console.error('[Settings] Error saving plant type:', error);
       toast({
         title: "Lỗi",
-        description: "Không thể cập nhật loại cây",
+        description: `Không thể cập nhật loại cây. ${describeFirebaseError(error)}`,
         variant: "destructive",
       });
     } finally {
@@ -277,6 +279,9 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Sampling interval (Jetson) + irrigation duration */}
+      <SamplingIntervalCard />
 
       {/* Warning Settings Table - Only Low and High thresholds */}
       <div className="rounded-2xl border border-border bg-card p-6">

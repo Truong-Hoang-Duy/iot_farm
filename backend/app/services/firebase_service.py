@@ -1,50 +1,54 @@
+import json
 import os
-from typing import Dict, Any, Optional
 from datetime import datetime
-import httpx
+from typing import Any, Dict, Optional
 
-FIREBASE_DB_URL = os.getenv(
-    "FIREBASE_DB_URL",
-    "https://iot-farm-chilli-default-rtdb.asia-southeast1.firebasedatabase.app"
-)
+from app.core.config import CACHE_DIR as _CACHE_DIR
+from app.services.firebase_client import get_firebase
+
 
 async def get_latest_sensor_from_firebase() -> Optional[Dict[str, Any]]:
-    """Đọc mẫu quan trắc cảm biến 7 in 1 mới nhất từ Firebase Realtime Database (node /data)."""
+    """Đọc mẫu quan trắc cảm biến mới nhất từ Firebase Realtime Database (node /data).
+    Chỉ truy vấn ngày mới nhất (orderBy $key + limitToLast) thay vì tải toàn bộ node."""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{FIREBASE_DB_URL}/data.json")
-            if res.status_code != 200 or not res.json():
-                return None
-            
-            data = res.json()
-            # Cấu trúc: { "YYYY-MM-DD": { "HH:MM:SS": { EC, K, N, P, ... } } }
-            sorted_dates = sorted(data.keys(), reverse=True)
-            if not sorted_dates:
-                return None
-            
-            latest_date = sorted_dates[0]
-            times = data[latest_date]
-            sorted_times = sorted(times.keys(), reverse=True)
-            if not sorted_times:
-                return None
-            
-            latest_time = sorted_times[0]
-            reading = times[latest_time]
-            return {
-                "date": latest_date,
-                "time": latest_time,
-                "timestamp": f"{latest_time} {latest_date}",
-                "reading": reading
-            }
+        fb = get_firebase()
+        latest_day = await fb.query_by_key("data", limit_to_last=1)
+        if not isinstance(latest_day, dict) or not latest_day:
+            return None
+        latest_date = sorted(latest_day.keys())[-1]
+        times = latest_day[latest_date] or {}
+        # Cấu trúc: { "YYYY-MM-DD": { "HH:MM[:SS]": { EC, K, N, P, ... } } }
+        sorted_times = sorted(times.keys(), key=lambda t: t if t.count(":") == 2 else t + ":00", reverse=True)
+        if not sorted_times:
+            return None
+        latest_time = sorted_times[0]
+        reading = times[latest_time]
+        return {
+            "date": latest_date,
+            "time": latest_time,
+            "timestamp": f"{latest_time} {latest_date}",
+            "reading": reading,
+        }
     except Exception as e:
         print(f"[FirebaseService] Lỗi đọc dữ liệu cảm biến: {e}")
         return None
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+
+async def get_plant_config_from_firebase() -> Dict[str, Any]:
+    """Đọc cấu hình cây trồng (streaming/config/plant) do người dùng cài đặt trên Dashboard."""
+    try:
+        cfg = await get_firebase().get("streaming/config/plant")
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+CACHE_DIR = str(_CACHE_DIR)
 CACHE_FILE = os.path.join(CACHE_DIR, "latest_recommendation.json")
 
 # Biến bộ nhớ đệm
 _memory_cache: Optional[Dict[str, Any]] = None
+
 
 async def save_recommendation_to_firebase(recommendation_dict: Dict[str, Any]) -> bool:
     """Lưu trữ kết quả khuyến nghị mới nhất vào bộ nhớ cache và Firebase."""
@@ -55,26 +59,20 @@ async def save_recommendation_to_firebase(recommendation_dict: Dict[str, Any]) -
 
         # Lưu file local
         os.makedirs(CACHE_DIR, exist_ok=True)
-        import json
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(recommendation_dict, f, ensure_ascii=False, indent=2)
 
         # Cố gắng đẩy lên Firebase (nếu có quyền ghi)
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                res = await client.put(
-                    f"{FIREBASE_DB_URL}/recommendations/latest.json",
-                    json=recommendation_dict
-                )
-                if res.status_code == 200:
-                    return True
-        except Exception:
-            pass
+            await get_firebase().put("recommendations/latest", recommendation_dict)
+        except Exception as e:
+            print(f"[FirebaseService] Không đẩy được khuyến nghị lên Firebase: {e}")
 
         return True
     except Exception as e:
         print(f"[FirebaseService] Lỗi lưu khuyến nghị vào cache: {e}")
         return False
+
 
 async def get_cached_recommendation_from_firebase() -> Optional[Dict[str, Any]]:
     """Lấy bản ghi khuyến nghị mới nhất đang được lưu trong cache hoặc Firebase."""
@@ -85,7 +83,6 @@ async def get_cached_recommendation_from_firebase() -> Optional[Dict[str, Any]]:
     # Đọc từ file local nếu có
     if os.path.exists(CACHE_FILE):
         try:
-            import json
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 _memory_cache = data
@@ -95,11 +92,10 @@ async def get_cached_recommendation_from_firebase() -> Optional[Dict[str, Any]]:
 
     # Đọc từ Firebase
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            res = await client.get(f"{FIREBASE_DB_URL}/recommendations/latest.json")
-            if res.status_code == 200 and res.json():
-                _memory_cache = res.json()
-                return res.json()
+        data = await get_firebase().get("recommendations/latest")
+        if data:
+            _memory_cache = data
+            return data
     except Exception:
         pass
 

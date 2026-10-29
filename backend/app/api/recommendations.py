@@ -16,6 +16,8 @@ from app.services.firebase_service import (
     get_cached_recommendation_from_firebase
 )
 from app.services.scheduler import run_auto_analysis
+from app.services.weather_service import summarize_next_hours
+from fastapi.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/recommendations", tags=["Recommendations & IoT Farm Advisor"])
 
@@ -57,17 +59,23 @@ async def get_ai_recommendation(payload: AdvisorRequest):
     Tự động đồng bộ kết quả lên Firebase /recommendations/latest.
     """
     sensor_dict = payload.sensor_reading.model_dump()
+    try:
+        weather = await run_in_threadpool(summarize_next_hours, 24)
+    except Exception:
+        weather = None
     result = await get_gemini_agronomy_advice(
         plant_type=payload.plant_type,
         age_days=payload.age_days,
         growth_stage=payload.growth_stage,
         sensor=sensor_dict,
-        custom_notes=payload.custom_notes
+        custom_notes=payload.custom_notes,
+        weather=weather,
     )
 
     # Tự động cập nhật lên Firebase
     result_dict = result.model_dump()
     result_dict["sensor_snapshot"] = sensor_dict
+    result_dict["weather_snapshot"] = weather
     result_dict["trigger_reason"] = "Người dùng yêu cầu phân tích"
     await save_recommendation_to_firebase(result_dict)
 

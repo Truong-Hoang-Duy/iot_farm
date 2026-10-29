@@ -41,7 +41,8 @@ def build_agronomy_prompt(
     age_days: int,
     growth_stage: str,
     sensor: Dict[str, Any],
-    custom_notes: str | None = None
+    custom_notes: str | None = None,
+    weather: Dict[str, Any] | None = None,
 ) -> str:
     prompt = f"""
 Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
@@ -62,6 +63,16 @@ Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
 """
     if custom_notes:
         prompt += f"- Ghi chú của nông dân: {custom_notes}\n"
+
+    if weather and weather.get("available"):
+        prompt += (
+            f"- Dự báo thời tiết {weather.get('hours', 24)} giờ tới (Open-Meteo): "
+            f"tổng mưa {weather.get('precip_total_mm')} mm, xác suất mưa tối đa {weather.get('precip_prob_max')}%, "
+            f"{weather.get('rain_hours')} giờ có mưa, nhiệt độ {weather.get('temp_min')}-{weather.get('temp_max')}°C, "
+            f"độ ẩm KK TB {weather.get('rh_mean')}%, bốc thoát hơi ET0 {weather.get('et0_total_mm')} mm.\n"
+            "  -> Hãy điều chỉnh lượng nước tưới và thời điểm bón phân theo dự báo này "
+            "(sắp mưa thì giảm/hoãn tưới, tránh bón phân ngay trước mưa lớn).\n"
+        )
 
     prompt += "\nHãy tính toán điểm sức khỏe đất và đưa ra phác đồ theo đúng cấu trúc JSON quy định."
     return prompt

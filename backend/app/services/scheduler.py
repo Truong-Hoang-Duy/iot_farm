@@ -1,7 +1,10 @@
 import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
+from fastapi.concurrency import run_in_threadpool
+from app.services.weather_service import summarize_next_hours
 from app.services.firebase_service import (
+    get_plant_config_from_firebase,
     get_latest_sensor_from_firebase,
     save_recommendation_to_firebase,
     get_cached_recommendation_from_firebase
@@ -20,12 +23,19 @@ async def run_auto_analysis(trigger_reason: str = "scheduled") -> Optional[Dict[
         return None
 
     reading = sensor_data["reading"]
+    # Lấy cấu hình cây trồng do người dùng cài đặt (streaming/config/plant), có giá trị mặc định
+    plant = await get_plant_config_from_firebase()
+    try:
+        weather = await run_in_threadpool(summarize_next_hours, 24)
+    except Exception:
+        weather = None
     advice = await get_gemini_agronomy_advice(
-        plant_type="Cây ớt (Chili Pepper)",
-        age_days=45,
-        growth_stage="Ra hoa & tạo quả",
+        plant_type=str(plant.get("type") or "Cây ớt (Chili Pepper)"),
+        age_days=int(plant.get("age_days") or 45),
+        growth_stage=str(plant.get("growth_stage") or "Ra hoa & tạo quả"),
         sensor=reading,
-        custom_notes=f"Phân tích tự động định kỳ - {trigger_reason}"
+        custom_notes=f"Phân tích tự động định kỳ - {trigger_reason}",
+        weather=weather,
     )
 
     advice_dict = advice.model_dump()
@@ -40,6 +50,7 @@ async def run_auto_analysis(trigger_reason: str = "scheduled") -> Optional[Dict[
         "K": reading.get("K"),
     }
     advice_dict["trigger_reason"] = trigger_reason
+    advice_dict["weather_snapshot"] = weather
 
     # Lưu vào Firebase
     saved = await save_recommendation_to_firebase(advice_dict)

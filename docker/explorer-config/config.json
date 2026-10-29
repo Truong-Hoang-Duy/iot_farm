@@ -1,0 +1,7 @@
+{
+  "DEFAULT_INFLUX_SERVER": "http://influxdb3:8181",
+  "DEFAULT_INFLUX_DATABASE": "iot_farm",
+  "DEFAULT_API_TOKEN": "apiv3_local_without_auth",
+  "DEFAULT_SERVER_NAME": "IoT Farm - InfluxDB 3 Local"
+}
+

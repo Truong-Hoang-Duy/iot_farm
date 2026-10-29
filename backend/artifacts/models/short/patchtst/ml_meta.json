@@ -1,0 +1,26 @@
+{
+ "best_step": 700,
+ "hparams": {
+  "h": 144,
+  "input_size": 576,
+  "learning_rate": 0.0005,
+  "max_steps": 1500,
+  "val_check_steps": 100,
+  "early_stop_patience_steps": 5,
+  "batch_size": 32,
+  "windows_batch_size": 256,
+  "inference_windows_batch_size": 1024,
+  "scaler_type": "robust",
+  "random_seed": 42,
+  "step_size": 6,
+  "patch_len": 24,
+  "stride": 12,
+  "hidden_size": 128,
+  "n_heads": 8,
+  "encoder_layers": 3,
+  "linear_hidden_size": 256,
+  "dropout": 0.2,
+  "revin": true
+ },
+ "futr_exog": []
+}

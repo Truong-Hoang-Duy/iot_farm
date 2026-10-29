@@ -74,15 +74,6 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   return response.json();
 }
 
-// Activity Log type
-export interface ActivityLog {
-  id: string;
-  device: 'pump' | 'light';
-  action: string;
-  duration: string;
-  timestamp: string;
-}
-
 // Warning Threshold type
 export interface WarningThreshold {
   id: string;
@@ -214,16 +205,6 @@ export const controlAPI = {
     return { success: true };
   },
   
-  getActivityLog: async (): Promise<ActivityLog[]> => {
-    console.log('[API] GET /controls/activity - Fetching activity log');
-    // In production, replace with: return fetchAPI<ActivityLog[]>('/controls/activity');
-    return [
-      { id: '1', device: 'pump', action: 'Bật máy bơm', duration: '15 phút', timestamp: new Date().toISOString() },
-      { id: '2', device: 'light', action: 'Tắt đèn chiếu sáng', duration: '4 giờ', timestamp: new Date(Date.now() - 7200000).toISOString() },
-      { id: '3', device: 'light', action: 'Bật đèn chiếu sáng', duration: '-', timestamp: new Date(Date.now() - 21600000).toISOString() },
-      { id: '4', device: 'pump', action: 'Tưới tự động', duration: '10 phút', timestamp: new Date(Date.now() - 25200000).toISOString() },
-    ];
-  },
 };
 
 // Recommendations

@@ -1,0 +1,61 @@
+# =====================================================================
+# IoT Farm - InfluxDB 3 Core (time-series database chạy localhost)
+#   Khởi động : docker compose up -d
+#   Kiểm tra  : curl http://localhost:18181/health
+#   Dừng      : docker compose down        (dữ liệu vẫn giữ trong volume)
+#   Xóa sạch  : docker compose down -v
+#
+# Ghi chú:
+# - Chỉ mở cổng trên 127.0.0.1 (localhost) + tắt xác thực để chạy cục bộ dễ dàng.
+#   Muốn bật xác thực: bỏ "--without-auth", tạo token bằng
+#     docker exec -it iot-farm-influxdb3 influxdb3 create token --admin
+#   rồi điền vào INFLUX_TOKEN trong backend/.env
+# - InfluxDB 3 Core mặc định chỉ cho 1 truy vấn quét tối đa 432 file Parquet (~72h dữ liệu,
+#   mỗi file 10 phút). Dự án lưu > 260 ngày nên nâng --query-file-limit.
+# - Cổng host mặc định 18181 (không dùng 8181 vì Windows/Hyper-V thường giữ dải cổng 8009-9008,
+#   kiểm tra: netsh int ipv4 show excludedportrange protocol=tcp). Đổi bằng biến INFLUX_HOST_PORT.
+# - Giao diện web (InfluxDB 3 Explorer): tự bật cùng `docker compose up -d`,
+#   mở tại http://localhost:18888 (đã gắn sẵn docker/explorer-config/config.json
+#   trỏ thẳng vào http://influxdb3:8181, database `iot_farm`).
+# =====================================================================
+name: iot-farm
+
+services:
+  influxdb3:
+    image: influxdb:3-core
+    container_name: iot-farm-influxdb3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${INFLUX_HOST_PORT:-18181}:8181"
+    command:
+      - influxdb3
+      - serve
+      - --node-id=iot-farm-node0
+      - --object-store=file
+      - --data-dir=/var/lib/influxdb3/data
+      - --without-auth
+      - --query-file-limit=100000
+    volumes:
+      # gắn vào thư mục gốc /var/lib/influxdb3 (thuộc user influxdb3 trong image) để tránh lỗi
+      # "Permission denied" khi volume mới được tạo
+      - influxdb3_data:/var/lib/influxdb3
+
+  explorer:
+    image: influxdata/influxdb3-ui:latest
+    container_name: iot-farm-influxdb3-explorer
+    restart: unless-stopped
+    command: ["--mode=admin"]
+    ports:
+      - "127.0.0.1:${EXPLORER_HOST_PORT:-18888}:8080"
+    environment:
+      SESSION_SECRET_KEY: "${EXPLORER_SESSION_SECRET:-6f8e2b4d9a1c7f3e5b0d8a2c4e6f1a9b3d5c7e9f0a2b4c6d8e1f3a5b7c9d0e2f}"
+    volumes:
+      - ./docker/explorer-config:/app-root/config:ro
+      - influxdb3_explorer_db:/db:rw
+    depends_on:
+      - influxdb3
+
+volumes:
+  influxdb3_data:
+  influxdb3_explorer_db:
+

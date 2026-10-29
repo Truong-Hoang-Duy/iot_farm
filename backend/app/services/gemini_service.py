@@ -22,7 +22,8 @@ def generate_rule_based_fallback(
     plant_type: str,
     age_days: int,
     growth_stage: str,
-    sensor: Dict[str, Any]
+    sensor: Dict[str, Any],
+    weather: Dict[str, Any] | None = None,
 ) -> AdvisorResponse:
     """Bộ suy diễn dự phòng chuẩn Haifa Group khi chưa cấu hình Gemini API Key."""
     moisture = sensor.get("moisture", 50.0) or 50.0
@@ -48,6 +49,16 @@ def generate_rule_based_fallback(
         warnings.append("Nguy cơ thối rễ và nấm Phytophthora phát triển do đất ngập úng.")
     else:
         watering = f"Độ ẩm đất hiện đạt mức lý tưởng ({moisture:.1f}%). Duy trì tưới vào lúc 06:30 sáng và 16:30 chiều."
+
+    # Điều chỉnh theo dự báo thời tiết (Open-Meteo)
+    if weather and weather.get("available"):
+        rain = weather.get("precip_total_mm") or 0
+        et0 = weather.get("et0_total_mm") or 0
+        if rain >= 5:
+            watering += f" Dự báo mưa khoảng {rain} mm trong {weather.get('hours', 24)}h tới: giảm 50% hoặc hoãn lượt tưới kế tiếp, kiểm tra rãnh thoát nước."
+            tips.append("Tránh bón phân hòa tan ngay trước khi mưa lớn để hạn chế rửa trôi dinh dưỡng.")
+        elif et0 >= 4:
+            watering += f" Bốc thoát hơi ET0 dự báo {et0} mm/ngày, gần như không mưa: tăng lượng nước khoảng 20%."
 
     # Đánh giá pH
     if pH < 5.8:
@@ -128,18 +139,19 @@ async def get_gemini_agronomy_advice(
     age_days: int,
     growth_stage: str,
     sensor: Dict[str, Any],
-    custom_notes: str | None = None
+    custom_notes: str | None = None,
+    weather: Dict[str, Any] | None = None,
 ) -> AdvisorResponse:
     """Gọi Google Gemini 2.5 Flash để sinh đề xuất phân bón & chăm sóc."""
     if not is_gemini_configured():
-        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor)
+        return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, weather)
 
     try:
         from google import genai
         from google.genai import types
 
         client = genai.Client(api_key=GEMINI_API_KEY)
-        user_prompt = build_agronomy_prompt(plant_type, age_days, growth_stage, sensor, custom_notes)
+        user_prompt = build_agronomy_prompt(plant_type, age_days, growth_stage, sensor, custom_notes, weather)
 
         # Sử dụng config với response_mime_type JSON
         response = client.models.generate_content(
@@ -171,7 +183,7 @@ async def get_gemini_agronomy_advice(
 
     except Exception as e:
         print(f"[IoTFarmService] Lỗi gọi API phân tích: {e}. Chuyển sang fallback.")
-        fallback = generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor)
+        fallback = generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, weather)
         return fallback
 
 async def chat_with_gemini(

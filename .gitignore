@@ -46,3 +46,16 @@ backend/.env
 *.njsproj
 *.sln
 *.sw?
+
+# IoT Farm v2
+.venv/
+backend/.venv/
+backend/secrets/
+backend/artifacts/hf_cache/
+backend/artifacts/**/checkpoints/
+lightning_logs/
+edge/config.ini
+edge/data/
+*.sqlite3
+*.db
+edge/secrets/

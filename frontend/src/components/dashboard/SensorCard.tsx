@@ -35,7 +35,7 @@ export function SensorCard({ title, value, unit, icon: Icon, color, min, max }: 
     : null;
 
   const isInRange = percentage !== null && percentage >= 0 && percentage <= 100;
-  console.log({ title, value, unit, min, max, percentage, isInRange });
+
 
   return (
     <div className={cn(

@@ -1,22 +1,43 @@
 import { useState, useEffect } from 'react';
-import { Power, Droplets, Sun, Clock, Lock, Settings, Calendar, Zap, Timer } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+  Power,
+  Droplets,
+  Sun,
+  Clock,
+  Lock,
+  Settings,
+  Calendar,
+  Zap,
+  Timer,
+  WifiOff,
+  FlaskConical,
+  ScrollText,
+  ArrowRight,
+  Loader2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { 
-  subscribeStreamingConfig, 
+import {
+  subscribeStreamingConfig,
   setStreamingIrrigationMode,
   setStreamingLightMode,
-  setStreamingControlStatus, 
+  setStreamingControlStatus,
   setStreamingIrrigationTime,
   setStreamingLightTime,
   getControlDeviceStatus,
-  StreamingConfig,
+  DEFAULT_IRRIGATION_DURATION_MIN,
+  type ControlDeviceInfo,
+  type StreamingConfig,
 } from '@/services/firebaseAPI';
-import { controlAPI, ActivityLog } from '@/services/api';
+import { subscribeFirebaseWriteLogs, normalizeTs, type FirebaseWriteLog } from '@/services/logsAPI';
+import { useDeviceStatus } from '@/hooks/useDeviceStatus';
+import { toastFirebaseWriteError } from '@/lib/firebaseErrors';
+import { formatEpochMsVi, formatRelativeVi, formatTimeOnlyVi, todayDateKey } from '@/lib/timeKeys';
 import { useToast } from '@/hooks/use-toast';
 
 type ControlMode = 'auto' | 'schedule' | 'manual';
@@ -27,6 +48,8 @@ const modeToNumber: Record<ControlMode, number> = {
   manual: 0,
 };
 
+const modeLabels: Record<ControlMode, string> = { auto: 'Tự động', schedule: 'Lập lịch', manual: 'Thủ công' };
+
 const numberToMode = (num: number | string | undefined): ControlMode => {
   if (num === undefined || num === '') return 'auto';
   const n = typeof num === 'string' ? parseInt(num) : num;
@@ -35,9 +58,77 @@ const numberToMode = (num: number | string | undefined): ControlMode => {
   return 'auto';
 };
 
+/** last_on_time có thể là chuỗi thời gian hoặc epoch (giây/ms). */
+const formatLastOnTime = (value: string | number): string => {
+  if (value === '' || value === null || value === undefined) return '--:--';
+  const n = typeof value === 'number' ? value : /^\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : NaN;
+  if (Number.isFinite(n) && n > 0) {
+    return formatEpochMsVi(n > 1e12 ? n : n * 1000);
+  }
+  return String(value);
+};
+
+/** daily_time: tổng số giờ bật trong ngày (theo hợp đồng schema). */
+const formatDailyTime = (hours: number) => {
+  if (!Number.isFinite(hours) || hours <= 0) return '0 phút';
+  if (hours < 1) return `${Math.round(hours * 60)} phút`;
+  return `${hours.toFixed(1)} giờ`;
+};
+
+const EMPTY_INFO: ControlDeviceInfo = getControlDeviceStatus(null);
+
+/** Hộp trạng thái mong muốn / thực tế của relay. */
+function RelayStatePanel({ info, serverNow }: { info: ControlDeviceInfo; serverNow: number }) {
+  const pending = info.actual !== null && info.actual !== info.status;
+  return (
+    <div className="mb-4 rounded-xl border border-border bg-secondary/30 p-3 space-y-2 text-sm">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-4">
+          <span>
+            <span className="text-muted-foreground">Mong muốn: </span>
+            <span className={cn('font-semibold', info.status ? 'text-success' : 'text-muted-foreground')}>
+              {info.status ? 'Bật' : 'Tắt'}
+            </span>
+          </span>
+          <span>
+            <span className="text-muted-foreground">Thực tế: </span>
+            <span
+              className={cn(
+                'font-semibold',
+                info.actual === null ? 'text-muted-foreground' : info.actual ? 'text-success' : 'text-foreground',
+              )}
+            >
+              {info.actual === null ? 'Chưa báo' : info.actual ? 'Bật' : 'Tắt'}
+            </span>
+          </span>
+        </div>
+        {info.simulated && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+            <FlaskConical className="h-3 w-3" />
+            Mô phỏng – chưa có relay
+          </span>
+        )}
+      </div>
+      {pending && (
+        <p className="text-xs text-warning flex items-center gap-1">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Đang chờ thiết bị xác nhận trạng thái mới…
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">
+        Cập nhật:{' '}
+        {info.updated_at !== null
+          ? `${formatEpochMsVi(info.updated_at)} (${formatRelativeVi(serverNow - info.updated_at)})`
+          : '--'}
+      </p>
+    </div>
+  );
+}
+
 export default function ControlsPage() {
   const [streamingConfig, setStreamingConfig] = useState<StreamingConfig | null>(null);
-  const [activityLog, setActivityLog] = useState<ActivityLog[]>([]);
+  const [recentWrites, setRecentWrites] = useState<FirebaseWriteLog[]>([]);
+  const [recentWritesLoaded, setRecentWritesLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState<string | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   
@@ -53,17 +144,18 @@ export default function ControlsPage() {
   const [lightOffTime, setLightOffTime] = useState<number>(18);
   
   const { toast } = useToast();
+  const device = useDeviceStatus();
 
   // Derived state from streaming config - listen to streaming/control for status
-  const pumpInfo = streamingConfig?.control?.pump 
-    ? getControlDeviceStatus(streamingConfig.control.pump) 
-    : { status: false, daily_time: 0, last_on_time: '' };
-  const lightInfo = streamingConfig?.control?.light 
-    ? getControlDeviceStatus(streamingConfig.control.light) 
-    : { status: false, daily_time: 0, last_on_time: '' };
+  const pumpInfo = streamingConfig?.control?.pump ? getControlDeviceStatus(streamingConfig.control.pump) : EMPTY_INFO;
+  const lightInfo = streamingConfig?.control?.light ? getControlDeviceStatus(streamingConfig.control.light) : EMPTY_INFO;
 
+  // Trạng thái mong muốn (UI điều khiển) và trạng thái hiển thị (ưu tiên thực tế nếu có)
   const isPumpOn = pumpInfo.status;
   const isLightOn = lightInfo.status;
+  const pumpActive = pumpInfo.actual ?? pumpInfo.status;
+  const lightActive = lightInfo.actual ?? lightInfo.status;
+  const irrigationDuration = streamingConfig?.config?.irrigation_duration_min ?? DEFAULT_IRRIGATION_DURATION_MIN;
 
   useEffect(() => {
     const unsubscribe = subscribeStreamingConfig((config) => {
@@ -101,12 +193,25 @@ export default function ControlsPage() {
       setIsInitialLoading(false);
     });
 
-    controlAPI.getActivityLog().then(setActivityLog).catch(console.error);
+    // Nhật ký hoạt động: các lô ghi Firebase gần nhất của Jetson (thay cho mock activity log)
+    const unsubscribeLogs = subscribeFirebaseWriteLogs(
+      todayDateKey(),
+      (items) => {
+        setRecentWrites(items.slice(0, 8));
+        setRecentWritesLoaded(true);
+      },
+      () => setRecentWritesLoaded(true),
+      8,
+    );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeLogs();
+    };
   }, []);
 
   const handlePumpModeChange = async (mode: ControlMode) => {
+    const previous = pumpMode;
     try {
       setIsLoading('pumpMode');
       setPumpMode(mode);
@@ -114,24 +219,20 @@ export default function ControlsPage() {
       // Update Firebase with pump mode
       await setStreamingIrrigationMode(modeToNumber[mode]);
       
-      const modeLabels = { auto: 'Tự động', schedule: 'Lập lịch', manual: 'Thủ công' };
       toast({
         title: "Đã thay đổi chế độ bơm",
         description: `Chế độ bơm đã chuyển sang ${modeLabels[mode]}`,
       });
     } catch (error) {
-      console.error('[Controls] Error changing pump mode:', error);
-      toast({
-        title: "Lỗi",
-        description: "Không thể thay đổi chế độ bơm",
-        variant: "destructive",
-      });
+      setPumpMode(previous);
+      toastFirebaseWriteError(error, 'Không thể thay đổi chế độ bơm');
     } finally {
       setIsLoading(null);
     }
   };
 
   const handleLightModeChange = async (mode: ControlMode) => {
+    const previous = lightMode;
     try {
       setIsLoading('lightMode');
       setLightMode(mode);
@@ -139,18 +240,13 @@ export default function ControlsPage() {
       // Update Firebase with light mode
       await setStreamingLightMode(modeToNumber[mode]);
       
-      const modeLabels = { auto: 'Tự động', schedule: 'Lập lịch', manual: 'Thủ công' };
       toast({
         title: "Đã thay đổi chế độ đèn",
         description: `Chế độ đèn đã chuyển sang ${modeLabels[mode]}`,
       });
     } catch (error) {
-      console.error('[Controls] Error changing light mode:', error);
-      toast({
-        title: "Lỗi",
-        description: "Không thể thay đổi chế độ đèn",
-        variant: "destructive",
-      });
+      setLightMode(previous);
+      toastFirebaseWriteError(error, 'Không thể thay đổi chế độ đèn');
     } finally {
       setIsLoading(null);
     }
@@ -177,18 +273,10 @@ export default function ControlsPage() {
       
       toast({
         title: device === 'pump' ? 'Máy bơm' : 'Đèn chiếu sáng',
-        description: `Đã ${newStatus ? 'bật' : 'tắt'} ${device === 'pump' ? 'máy bơm' : 'đèn'}`,
+        description: `Đã gửi lệnh ${newStatus ? 'bật' : 'tắt'} ${device === 'pump' ? 'máy bơm' : 'đèn'}`,
       });
-      
-      const logs = await controlAPI.getActivityLog();
-      setActivityLog(logs);
     } catch (error) {
-      console.error(`[Controls] Error toggling ${device}:`, error);
-      toast({
-        title: "Lỗi",
-        description: `Không thể điều khiển ${device === 'pump' ? 'máy bơm' : 'đèn'}`,
-        variant: "destructive",
-      });
+      toastFirebaseWriteError(error, `Không thể điều khiển ${device === 'pump' ? 'máy bơm' : 'đèn'}`);
     } finally {
       setIsLoading(null);
     }
@@ -211,12 +299,7 @@ export default function ControlsPage() {
       
       setPumpScheduleDialogOpen(false);
     } catch (error) {
-      console.error('[Controls] Error saving pump schedule:', error);
-      toast({
-        title: "Lỗi",
-        description: "Không thể lưu lịch tưới",
-        variant: "destructive",
-      });
+      toastFirebaseWriteError(error, 'Không thể lưu lịch tưới');
     } finally {
       setIsLoading(null);
     }
@@ -235,12 +318,7 @@ export default function ControlsPage() {
       
       setLightScheduleDialogOpen(false);
     } catch (error) {
-      console.error('[Controls] Error saving light schedule:', error);
-      toast({
-        title: "Lỗi",
-        description: "Không thể lưu lịch đèn",
-        variant: "destructive",
-      });
+      toastFirebaseWriteError(error, 'Không thể lưu lịch đèn');
     } finally {
       setIsLoading(null);
     }
@@ -255,11 +333,6 @@ export default function ControlsPage() {
 
   const formatTime = (hour: number) => `${hour.toString().padStart(2, '0')}:00`;
 
-  const formatDailyTime = (hours: number) => {
-    if (hours < 1) return `${Math.round(hours * 60)} phút`;
-    return `${hours.toFixed(1)} giờ`;
-  };
-
   if (isInitialLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -267,6 +340,8 @@ export default function ControlsPage() {
       </div>
     );
   }
+
+  const deviceOffline = device.loaded && !device.online;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -278,12 +353,30 @@ export default function ControlsPage() {
         </p>
       </div>
 
+      {/* Offline warning */}
+      {deviceOffline && (
+        <div className="flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4">
+          <WifiOff className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="font-semibold text-destructive">
+              {device.exists ? 'Thiết bị Jetson đang ngoại tuyến' : 'Chưa có thiết bị kết nối'}
+            </p>
+            <p className="text-muted-foreground">
+              {device.exists && device.sinceLastSeenMs !== null
+                ? `Lần liên lạc cuối ${formatRelativeVi(device.sinceLastSeenMs)}. `
+                : ''}
+              Lệnh điều khiển vẫn được lưu lên Firebase và sẽ được áp dụng khi thiết bị kết nối lại; trạng thái “Thực tế” có thể đã cũ.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Device Control Cards with Separate Modes */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Pump Control Card */}
         <div className={cn(
           "rounded-2xl border-2 p-6 transition-all duration-300",
-          isPumpOn 
+          pumpActive 
             ? "border-water bg-water/5 shadow-lg shadow-water/20" 
             : "border-border bg-card"
         )}>
@@ -292,7 +385,7 @@ export default function ControlsPage() {
             <div className="flex items-center gap-4">
               <div className={cn(
                 "h-14 w-14 rounded-2xl flex items-center justify-center transition-all",
-                isPumpOn 
+                pumpActive 
                   ? "bg-water text-water-foreground" 
                   : "bg-secondary text-muted-foreground"
               )}>
@@ -302,9 +395,9 @@ export default function ControlsPage() {
                 <h3 className="font-display text-xl font-semibold">Máy bơm</h3>
                 <p className={cn(
                   "text-sm font-medium",
-                  isPumpOn ? "text-water" : "text-muted-foreground"
+                  pumpActive ? "text-water" : "text-muted-foreground"
                 )}>
-                  {isPumpOn ? 'Đang hoạt động' : 'Đã tắt'}
+                  {pumpActive ? 'Đang hoạt động' : 'Đã tắt'}
                 </p>
               </div>
             </div>
@@ -314,6 +407,8 @@ export default function ControlsPage() {
               disabled={isLoading === 'pump' || pumpMode !== 'manual'}
             />
           </div>
+
+          <RelayStatePanel info={pumpInfo} serverNow={device.serverNow} />
 
           {/* Pump Mode Selector */}
           <div className="mb-4">
@@ -417,6 +512,10 @@ export default function ControlsPage() {
                           </div>
                         </div>
                       </div>
+                      <p className="text-xs text-muted-foreground">
+                        Mỗi lần tưới kéo dài {irrigationDuration} phút (đổi trong{' '}
+                        <Link to="/settings" className="text-primary underline-offset-2 hover:underline">Cài đặt</Link>).
+                      </p>
                       
                       <Button
                         className="w-full" 
@@ -430,7 +529,7 @@ export default function ControlsPage() {
                 </Dialog>
               </div>
               <div className="flex flex-wrap gap-2">
-                {pumpScheduleTimes.sort((a, b) => a - b).map((time, index) => (
+                {[...pumpScheduleTimes].sort((a, b) => a - b).map((time, index) => (
                   <div 
                     key={index}
                     className="flex items-center gap-1 bg-water/20 text-water px-3 py-1 rounded-full text-sm font-medium"
@@ -439,6 +538,9 @@ export default function ControlsPage() {
                     {formatTime(time)}
                   </div>
                 ))}
+                <span className="flex items-center gap-1 text-xs text-muted-foreground px-1">
+                  <Timer className="h-3 w-3" /> {irrigationDuration} phút/lần
+                </span>
               </div>
             </div>
           )}
@@ -468,7 +570,7 @@ export default function ControlsPage() {
         {/* Light Control Card */}
         <div className={cn(
           "rounded-2xl border-2 p-6 transition-all duration-300",
-          isLightOn 
+          lightActive 
             ? "border-warning bg-warning/5 shadow-lg shadow-warning/20" 
             : "border-border bg-card"
         )}>
@@ -477,7 +579,7 @@ export default function ControlsPage() {
             <div className="flex items-center gap-4">
               <div className={cn(
                 "h-14 w-14 rounded-2xl flex items-center justify-center transition-all",
-                isLightOn 
+                lightActive 
                   ? "bg-warning text-warning-foreground" 
                   : "bg-secondary text-muted-foreground"
               )}>
@@ -487,9 +589,9 @@ export default function ControlsPage() {
                 <h3 className="font-display text-xl font-semibold">Đèn chiếu sáng</h3>
                 <p className={cn(
                   "text-sm font-medium",
-                  isLightOn ? "text-warning" : "text-muted-foreground"
+                  lightActive ? "text-warning" : "text-muted-foreground"
                 )}>
-                  {isLightOn ? 'Đang bật' : 'Đã tắt'}
+                  {lightActive ? 'Đang bật' : 'Đã tắt'}
                 </p>
               </div>
             </div>
@@ -499,6 +601,8 @@ export default function ControlsPage() {
               disabled={isLoading === 'light' || lightMode !== 'manual'}
             />
           </div>
+
+          <RelayStatePanel info={lightInfo} serverNow={device.serverNow} />
 
           {/* Light Mode Selector */}
           <div className="mb-4">
@@ -660,13 +764,13 @@ export default function ControlsPage() {
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Tổng thời gian hôm nay</p>
                 <p className="font-display text-xl font-bold text-water">
-                  {pumpInfo.daily_time ?? "--"} phút
+                  {formatDailyTime(pumpInfo.daily_time)}
                 </p>
               </div>
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Lần bật cuối</p>
-                <p className="font-display text-lg font-semibold">
-                 {pumpInfo.last_on_time  ? new Date(Number(pumpInfo.last_on_time) * 1000 - 7 * 60 * 60 * 1000).toLocaleString("vi-VN")  : "--:--"}
+                <p className="font-display text-sm font-semibold">
+                  {formatLastOnTime(pumpInfo.last_on_time)}
                 </p>
               </div>
             </div>
@@ -684,18 +788,70 @@ export default function ControlsPage() {
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Tổng thời gian hôm nay</p>
                 <p className="font-display text-xl font-bold text-amber-700 dark:text-amber-400">
-                  {lightInfo.daily_time ?? "--"} phút
+                  {formatDailyTime(lightInfo.daily_time)}
                 </p>
               </div>
               <div className="rounded-lg bg-background/50 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Lần bật cuối</p>
-                <p className="font-display text-lg font-semibold">
-                  {lightInfo?.last_on_time  ? new Date(+lightInfo.last_on_time * 1000 - 7 * 60 * 60 * 1000).toLocaleString("vi-VN")  : "--:--"}
+                <p className="font-display text-sm font-semibold">
+                  {formatLastOnTime(lightInfo.last_on_time)}
                 </p>
               </div>
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Recent activity: latest Jetson → Firebase uploads */}
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="flex items-center justify-between mb-4 gap-2">
+          <h3 className="font-display text-xl font-semibold flex items-center gap-2">
+            <ScrollText className="h-5 w-5 text-primary" />
+            Hoạt động gần đây của Jetson
+          </h3>
+          <Button asChild variant="ghost" size="sm" className="gap-1">
+            <Link to="/logs">
+              Xem tất cả <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+        {!recentWritesLoaded ? (
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" /> Đang tải…
+          </p>
+        ) : recentWrites.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Hôm nay chưa có lô dữ liệu nào được ghi lên Firebase.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {recentWrites.map((log) => {
+              const ms = normalizeTs(log.ts);
+              return (
+                <li key={log.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full shrink-0',
+                        log.status === 'ok' ? 'bg-success' : log.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground',
+                      )}
+                    />
+                    <span className="font-mono text-xs text-muted-foreground shrink-0">
+                      {ms !== null ? formatTimeOnlyVi(ms) : '--'}
+                    </span>
+                    <span className="truncate">
+                      {log.status === 'error'
+                        ? `Lỗi ghi: ${log.error || 'không rõ'}`
+                        : `Ghi ${log.n_records ?? 0} bản ghi${log.from_backlog ? ' (từ hàng đợi offline)' : ''}`}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {log.first_key}
+                    {log.last_key && log.last_key !== log.first_key ? ` → ${log.last_key}` : ''}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );

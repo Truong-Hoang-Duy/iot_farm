@@ -29,9 +29,10 @@ export default function PlantInfoPage() {
     );
   }
 
-  const plantData = streamingConfig.config.plant;
-  const ageDays = plantData.age_days;
-  const plantType = plantData.type || 'chili';
+  const plantData = streamingConfig.config?.plant;
+  const rawAge = Number(plantData?.age_days);
+  const ageDays = Number.isFinite(rawAge) && rawAge >= 0 ? rawAge : 45;
+  const plantType = typeof plantData?.type === 'string' && plantData.type.trim() ? plantData.type : 'chili';
   
   // Get plant-specific data
   const plantGrowthData: PlantGrowthData = getPlantData(plantType);
@@ -45,9 +46,10 @@ export default function PlantInfoPage() {
   const careTips = careTipsByStage[currentStageIndex] || careTipsByStage[0];
 
   // Calculate progress within current stage
-  const stageProgress = Math.min(100, Math.round(((ageDays - currentStage.minDays) / (currentStage.maxDays - currentStage.minDays)) * 100));
+  const stageSpan = Math.max(1, currentStage.maxDays - currentStage.minDays);
+  const stageProgress = Math.max(0, Math.min(100, Math.round(((ageDays - currentStage.minDays) / stageSpan) * 100)));
   const daysRemaining = Math.max(0, currentStage.maxDays - ageDays);
-  const totalProgress = Math.round((ageDays / totalDays) * 100);
+  const totalProgress = Math.max(0, Math.min(100, Math.round((ageDays / Math.max(1, totalDays)) * 100)));
 
   // Get plant display name
   const getPlantDisplayName = (type: string): string => {

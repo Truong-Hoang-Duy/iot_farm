@@ -1,0 +1,25 @@
+# Mẫu unit systemd – install.sh sẽ thay @RUN_USER@, @RUN_GROUP@, @EDGE_DIR@ và cài vào
+# /etc/systemd/system/iot-farm-agent.service
+[Unit]
+Description=IoT Farm edge agent (Jetson Nano: CWT 7in1 + DHT20 -> SQLite -> Firebase)
+Wants=network-online.target
+After=network-online.target systemd-timesyncd.service
+# Không giới hạn số lần khởi động lại
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@RUN_USER@
+Group=@RUN_GROUP@
+WorkingDirectory=@EDGE_DIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+ExecStart="@EDGE_DIR@/.venv/bin/python" "@EDGE_DIR@/run_agent.py" --config "@EDGE_DIR@/config.ini"
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target

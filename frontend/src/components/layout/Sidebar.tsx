@@ -10,12 +10,16 @@ import {
   X,
   Droplets,
   LogOut,
-  User
+  User,
+  BrainCircuit,
+  CloudSun,
+  ScrollText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { DeviceOnlineIndicator } from './DeviceOnlineIndicator';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -23,6 +27,9 @@ const navigation = [
   { name: 'Cảnh báo', href: '/alerts', icon: AlertTriangle },
   { name: 'Điều khiển', href: '/controls', icon: Power },
   { name: 'Khuyến nghị', href: '/recommendations', icon: BookOpen },
+  { name: 'Mô hình dự báo', href: '/models', icon: BrainCircuit },
+  { name: 'Thời tiết', href: '/weather', icon: CloudSun },
+  { name: 'Nhật ký đồng bộ', href: '/logs', icon: ScrollText },
   { name: 'Cài đặt', href: '/settings', icon: Settings },
 ];
 
@@ -63,7 +70,7 @@ export function Sidebar() {
       >
         <div className="flex h-full flex-col">
           {/* Logo */}
-          <div className="flex items-center gap-3 px-6 py-8">
+          <div className="flex items-center gap-3 px-6 py-6">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white p-1.5 shadow-sm border border-border/40">
                 <img src="/uit_logo.svg" alt="Logo Trường Đại học Công nghệ Thông tin - ĐHQG TP.HCM" className="w-full h-full object-contain" />
             </div>
@@ -75,7 +82,7 @@ export function Sidebar() {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 space-y-1 px-4 py-4">
+          <nav className="flex-1 space-y-1 px-4 py-2 overflow-y-auto">
             {navigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
@@ -84,7 +91,7 @@ export function Sidebar() {
                   to={item.href}
                   onClick={() => setIsOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200",
+                    "flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium transition-all duration-200",
                     isActive
                       ? "bg-primary text-primary-foreground shadow-glow"
                       : "text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -120,13 +127,9 @@ export function Sidebar() {
               Đăng xuất
             </Button>
 
+            {/* Trạng thái thiết bị biên (Jetson) */}
             <div className="rounded-xl bg-secondary/50 p-3">
-              <p className="text-xs text-muted-foreground">
-                Kết nối: <span className="text-success font-medium">Trực tuyến</span>
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Cập nhật: {new Date().toLocaleTimeString('vi-VN')}
-              </p>
+              <DeviceOnlineIndicator />
             </div>
           </div>
         </div>

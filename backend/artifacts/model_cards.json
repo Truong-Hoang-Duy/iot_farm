@@ -1,0 +1,635 @@
+[
+ {
+  "key": "xgboost",
+  "name": "XGBoost",
+  "family": "Gradient boosting decision trees",
+  "paper": "Chen, T. & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. Proc. 22nd ACM SIGKDD, 785-794.",
+  "year": 2016,
+  "description": "Cây quyết định tăng cường gradient; dự báo trực tiếp nhiều bước với horizon là đặc trưng, hồi quy phân vị cho khoảng 80 %.",
+  "doi": "10.1145/2939672.2939785",
+  "url": "https://doi.org/10.1145/2939672.2939785",
+  "doi_url": "https://doi.org/10.1145/2939672.2939785",
+  "strategy": "Direct multi-horizon (horizon-as-feature), quantile regression q10/q50/q90, 1 model per target per group",
+  "probabilistic": true,
+  "hyperparameters": {
+   "short": {
+    "n_estimators": 3000,
+    "learning_rate": 0.05,
+    "max_depth": 8,
+    "min_child_weight": 20,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "max_bin": 256,
+    "tree_method": "hist",
+    "objective": "reg:quantileerror",
+    "quantile_alpha": [
+     0.1,
+     0.5,
+     0.9
+    ],
+    "early_stopping_rounds": 100,
+    "sampling": {
+     "origin_stride": 3,
+     "h_per_origin": 16
+    }
+   },
+   "long": {
+    "n_estimators": 3000,
+    "learning_rate": 0.05,
+    "max_depth": 8,
+    "min_child_weight": 20,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "max_bin": 256,
+    "tree_method": "hist",
+    "objective": "reg:quantileerror",
+    "quantile_alpha": [
+     0.1,
+     0.5,
+     0.9
+    ],
+    "early_stopping_rounds": 100,
+    "sampling": {
+     "origin_stride": 1,
+     "h_per_origin": 24
+    }
+   }
+  },
+  "train_info": {
+   "short": {
+    "device": "cuda",
+    "train_seconds": 171.76,
+    "predict_seconds": 1.9,
+    "fit_seconds_wall": 173.95,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "device": "cuda",
+     "per_target": {
+      "temperature": {
+       "n_train_rows": 387340,
+       "n_estimators": 354
+      },
+      "humidity": {
+       "n_train_rows": 390803,
+       "n_estimators": 334
+      },
+      "soiltemp": {
+       "n_train_rows": 394735,
+       "n_estimators": 423
+      },
+      "moisture": {
+       "n_train_rows": 394638,
+       "n_estimators": 348
+      },
+      "pH": {
+       "n_train_rows": 394710,
+       "n_estimators": 234
+      },
+      "EC": {
+       "n_train_rows": 392309,
+       "n_estimators": 584
+      },
+      "N": {
+       "n_train_rows": 392372,
+       "n_estimators": 506
+      },
+      "P": {
+       "n_train_rows": 392261,
+       "n_estimators": 665
+      },
+      "K": {
+       "n_train_rows": 392214,
+       "n_estimators": 718
+      }
+     },
+     "train_seconds": 180.17
+    }
+   },
+   "long": {
+    "device": "cuda",
+    "train_seconds": 100.98,
+    "predict_seconds": 0.97,
+    "fit_seconds_wall": 100.98,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "device": "cuda",
+     "per_target": {
+      "temperature": {
+       "n_train_rows": 139342,
+       "n_estimators": 441
+      },
+      "humidity": {
+       "n_train_rows": 139443,
+       "n_estimators": 420
+      },
+      "soiltemp": {
+       "n_train_rows": 140238,
+       "n_estimators": 489
+      },
+      "moisture": {
+       "n_train_rows": 140304,
+       "n_estimators": 96
+      },
+      "pH": {
+       "n_train_rows": 140236,
+       "n_estimators": 61
+      },
+      "EC": {
+       "n_train_rows": 139473,
+       "n_estimators": 169
+      },
+      "N": {
+       "n_train_rows": 139449,
+       "n_estimators": 122
+      },
+      "P": {
+       "n_train_rows": 139531,
+       "n_estimators": 213
+      },
+      "K": {
+       "n_train_rows": 139412,
+       "n_estimators": 201
+      }
+     },
+     "train_seconds": 85.36
+    }
+   }
+  }
+ },
+ {
+  "key": "lstm",
+  "name": "LSTM",
+  "family": "Recurrent neural network",
+  "paper": "Hochreiter, S. & Schmidhuber, J. (1997). Long Short-Term Memory. Neural Computation 9(8), 1735-1780.",
+  "year": 1997,
+  "description": "Mạng hồi quy có cổng nhớ dài-ngắn; encoder LSTM + decoder MLP dự báo trực tiếp H bước.",
+  "doi": "10.1162/neco.1997.9.8.1735",
+  "url": "https://doi.org/10.1162/neco.1997.9.8.1735",
+  "doi_url": "https://doi.org/10.1162/neco.1997.9.8.1735",
+  "strategy": "LSTM encoder (2x128) over the input window -> last hidden state + future-exog MLP -> H x 3 quantiles (direct multi-step, pinball loss, own PyTorch implementation), global across 9 series",
+  "probabilistic": true,
+  "hyperparameters": {
+   "short": {
+    "h": 144,
+    "input_size": 576,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.1,
+    "learning_rate": 0.001,
+    "batch_size": 256,
+    "max_steps": 2000,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 6,
+    "max_val_windows": 4096,
+    "loss": "pinball q=(0.1,0.5,0.9)",
+    "scaler": "window robust (median/IQR)",
+    "random_seed": 42,
+    "architecture": "LSTM encoder -> last hidden + future-exog MLP -> H x 3 quantiles",
+    "futr_exog": [
+     "hour_sin",
+     "hour_cos"
+    ]
+   },
+   "long": {
+    "h": 120,
+    "input_size": 336,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.1,
+    "learning_rate": 0.001,
+    "batch_size": 256,
+    "max_steps": 2000,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 6,
+    "max_val_windows": 4096,
+    "loss": "pinball q=(0.1,0.5,0.9)",
+    "scaler": "window robust (median/IQR)",
+    "random_seed": 42,
+    "architecture": "LSTM encoder -> last hidden + future-exog MLP -> H x 3 quantiles",
+    "futr_exog": [
+     "hour_sin",
+     "hour_cos",
+     "temperature_2m",
+     "relative_humidity_2m",
+     "precipitation",
+     "shortwave_radiation",
+     "et0_fao_evapotranspiration",
+     "cloud_cover",
+     "vapour_pressure_deficit",
+     "wind_speed_10m"
+    ]
+   }
+  },
+  "train_info": {
+   "short": {
+    "device": "cuda",
+    "train_seconds": 226.66,
+    "steps_run": 2000,
+    "n_train_windows": 464044,
+    "n_val_windows": 4096,
+    "best_step": 1600,
+    "predict_seconds": 2.16,
+    "fit_seconds_wall": 226.66,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "device": "cuda",
+     "train_seconds": 168.61,
+     "steps_run": 1600,
+     "n_train_windows": 668812,
+     "n_val_windows": 0,
+     "max_steps": 1600
+    }
+   },
+   "long": {
+    "device": "cuda",
+    "train_seconds": 96.66,
+    "steps_run": 1100,
+    "n_train_windows": 35217,
+    "n_val_windows": 4096,
+    "best_step": 500,
+    "predict_seconds": 0.79,
+    "fit_seconds_wall": 96.67,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "device": "cuda",
+     "train_seconds": 40.74,
+     "steps_run": 500,
+     "n_train_windows": 52281,
+     "n_val_windows": 0,
+     "max_steps": 500
+    }
+   }
+  }
+ },
+ {
+  "key": "nhits",
+  "name": "N-HiTS",
+  "family": "Deep MLP, hierarchical interpolation",
+  "paper": "Challu, C., Olivares, K. G., Oreshkin, B. N., Garza, F., Mergenthaler-Canseco, M. & Dubrawski, A. (2023). N-HiTS: Neural Hierarchical Interpolation for Time Series Forecasting. AAAI 37(6), 6989-6997.",
+  "year": 2023,
+  "description": "MLP phân cấp đa tần số: pooling đa tốc độ + nội suy phân cấp, mạnh cho dự báo dài.",
+  "doi": "10.1609/aaai.v37i6.25854",
+  "url": "https://doi.org/10.1609/aaai.v37i6.25854",
+  "doi_url": "https://doi.org/10.1609/aaai.v37i6.25854",
+  "strategy": "Multi-rate pooling + hierarchical interpolation, MQLoss (80% interval), global across 9 series",
+  "probabilistic": true,
+  "hyperparameters": {
+   "short": {
+    "h": 144,
+    "input_size": 576,
+    "learning_rate": 0.001,
+    "max_steps": 1500,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 5,
+    "batch_size": 32,
+    "windows_batch_size": 512,
+    "inference_windows_batch_size": 1024,
+    "scaler_type": "robust",
+    "random_seed": 42,
+    "step_size": 6,
+    "n_pool_kernel_size": [
+     16,
+     8,
+     1
+    ],
+    "n_freq_downsample": [
+     24,
+     12,
+     1
+    ],
+    "mlp_units": [
+     [
+      512,
+      512
+     ],
+     [
+      512,
+      512
+     ],
+     [
+      512,
+      512
+     ]
+    ],
+    "dropout_prob_theta": 0.1,
+    "loss": "MQLoss(level=[80])",
+    "futr_exog": [
+     "hour_sin",
+     "hour_cos"
+    ]
+   },
+   "long": {
+    "h": 120,
+    "input_size": 336,
+    "learning_rate": 0.001,
+    "max_steps": 1500,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 5,
+    "batch_size": 32,
+    "windows_batch_size": 512,
+    "inference_windows_batch_size": 1024,
+    "scaler_type": "robust",
+    "random_seed": 42,
+    "step_size": 1,
+    "n_pool_kernel_size": [
+     8,
+     4,
+     1
+    ],
+    "n_freq_downsample": [
+     24,
+     12,
+     1
+    ],
+    "mlp_units": [
+     [
+      512,
+      512
+     ],
+     [
+      512,
+      512
+     ],
+     [
+      512,
+      512
+     ]
+    ],
+    "dropout_prob_theta": 0.1,
+    "loss": "MQLoss(level=[80])",
+    "futr_exog": [
+     "hour_sin",
+     "hour_cos",
+     "temperature_2m",
+     "relative_humidity_2m",
+     "precipitation",
+     "shortwave_radiation",
+     "et0_fao_evapotranspiration",
+     "cloud_cover",
+     "vapour_pressure_deficit",
+     "wind_speed_10m"
+    ]
+   }
+  },
+  "train_info": {
+   "short": {
+    "val_size": 7488,
+    "n_rows": 539136,
+    "best_step": 1100,
+    "steps_run": 1499,
+    "train_seconds": 58.92,
+    "device": "cuda",
+    "predict_seconds": 3.87,
+    "fit_seconds_wall": 58.92,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "max_steps": 1100,
+     "n_rows": 676512,
+     "train_seconds": 37.87,
+     "device": "cuda"
+    }
+   },
+   "long": {
+    "val_size": 624,
+    "n_rows": 44928,
+    "best_step": 100,
+    "steps_run": 599,
+    "train_seconds": 19.32,
+    "device": "cuda",
+    "predict_seconds": 1.62,
+    "fit_seconds_wall": 19.32,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "max_steps": 100,
+     "n_rows": 56376,
+     "train_seconds": 3.64,
+     "device": "cuda"
+    }
+   }
+  }
+ },
+ {
+  "key": "patchtst",
+  "name": "PatchTST",
+  "family": "Transformer (patching, channel-independent)",
+  "paper": "Nie, Y., Nguyen, N. H., Sinthong, P. & Kalagnanam, J. (2023). A Time Series is Worth 64 Words: Long-term Forecasting with Transformers. ICLR 2023.",
+  "year": 2023,
+  "description": "Transformer chia chuỗi thành patch, độc lập kênh, chuẩn hoá theo cửa sổ.",
+  "doi": "10.48550/arXiv.2211.14730",
+  "url": "https://doi.org/10.48550/arXiv.2211.14730",
+  "doi_url": "https://doi.org/10.48550/arXiv.2211.14730",
+  "strategy": "Patches of the input window as tokens, univariate, MQLoss (80% interval), global across 9 series",
+  "probabilistic": true,
+  "hyperparameters": {
+   "short": {
+    "h": 144,
+    "input_size": 576,
+    "learning_rate": 0.0005,
+    "max_steps": 1500,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 5,
+    "batch_size": 32,
+    "windows_batch_size": 256,
+    "inference_windows_batch_size": 1024,
+    "scaler_type": "robust",
+    "random_seed": 42,
+    "step_size": 6,
+    "patch_len": 24,
+    "stride": 12,
+    "hidden_size": 128,
+    "n_heads": 8,
+    "encoder_layers": 3,
+    "linear_hidden_size": 256,
+    "dropout": 0.2,
+    "revin": true,
+    "loss": "MQLoss(level=[80])",
+    "futr_exog": []
+   },
+   "long": {
+    "h": 120,
+    "input_size": 336,
+    "learning_rate": 0.0005,
+    "max_steps": 1500,
+    "val_check_steps": 100,
+    "early_stop_patience_steps": 5,
+    "batch_size": 32,
+    "windows_batch_size": 256,
+    "inference_windows_batch_size": 1024,
+    "scaler_type": "robust",
+    "random_seed": 42,
+    "step_size": 1,
+    "patch_len": 24,
+    "stride": 12,
+    "hidden_size": 128,
+    "n_heads": 8,
+    "encoder_layers": 3,
+    "linear_hidden_size": 256,
+    "dropout": 0.2,
+    "revin": true,
+    "loss": "MQLoss(level=[80])",
+    "futr_exog": []
+   }
+  },
+  "train_info": {
+   "short": {
+    "val_size": 7488,
+    "n_rows": 539136,
+    "best_step": 700,
+    "steps_run": 1199,
+    "train_seconds": 49.09,
+    "device": "cuda",
+    "predict_seconds": 3.29,
+    "fit_seconds_wall": 49.09,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "max_steps": 700,
+     "n_rows": 676512,
+     "train_seconds": 25.72,
+     "device": "cuda"
+    }
+   },
+   "long": {
+    "val_size": 624,
+    "n_rows": 44928,
+    "best_step": 400,
+    "steps_run": 899,
+    "train_seconds": 23.96,
+    "device": "cuda",
+    "predict_seconds": 1.37,
+    "fit_seconds_wall": 23.96,
+    "nonfinite_pred_fraction": 0.0,
+    "final_fit": {
+     "max_steps": 400,
+     "n_rows": 56376,
+     "train_seconds": 10.57,
+     "device": "cuda"
+    }
+   }
+  }
+ },
+ {
+  "key": "chronos",
+  "name": "Chronos-Bolt (small)",
+  "family": "Pretrained foundation model (T5 encoder-decoder, zero-shot)",
+  "paper": "Ansari, A. F. et al. (2024). Chronos: Learning the Language of Time Series. Transactions on Machine Learning Research.",
+  "year": 2024,
+  "description": "Mô hình nền tảng huấn luyện trước trên ~100 tỷ điểm dữ liệu, dùng zero-shot (không huấn luyện lại).",
+  "doi": "10.48550/arXiv.2403.07815",
+  "url": "https://doi.org/10.48550/arXiv.2403.07815",
+  "doi_url": "https://doi.org/10.48550/arXiv.2403.07815",
+  "strategy": "amazon/chronos-bolt-small used zero-shot (no fine-tuning); quantiles q10/q50/q90",
+  "probabilistic": true,
+  "hyperparameters": {
+   "short": {
+    "model_id": "amazon/chronos-bolt-small",
+    "context_length": 2048,
+    "prediction_length": 144,
+    "quantiles": [
+     0.1,
+     0.5,
+     0.9
+    ]
+   },
+   "long": {
+    "model_id": "amazon/chronos-bolt-small",
+    "context_length": 2048,
+    "prediction_length": 120,
+    "quantiles": [
+     0.1,
+     0.5,
+     0.9
+    ]
+   }
+  },
+  "train_info": {
+   "short": {
+    "train_seconds": 0.0,
+    "load_seconds": 1.13,
+    "zero_shot": true,
+    "model_id": "amazon/chronos-bolt-small",
+    "device": "cuda",
+    "predict_seconds": 45.63,
+    "fit_seconds_wall": 1.13,
+    "nonfinite_pred_fraction": 0.0
+   },
+   "long": {
+    "train_seconds": 0.0,
+    "load_seconds": 0.0,
+    "zero_shot": true,
+    "model_id": "amazon/chronos-bolt-small",
+    "device": "cuda",
+    "predict_seconds": 10.42,
+    "fit_seconds_wall": 0.0,
+    "nonfinite_pred_fraction": 0.0
+   }
+  }
+ },
+ {
+  "key": "seasonal_naive",
+  "name": "Seasonal Naive (1 ngày)",
+  "family": "Baseline",
+  "paper": "Hyndman, R. J. & Athanasopoulos, G. (2021). Forecasting: Principles and Practice, 3rd ed. OTexts.",
+  "year": 2021,
+  "description": "Baseline: lặp lại giá trị cùng giờ của ngày hôm trước.",
+  "doi": null,
+  "url": "https://otexts.com/fpp3/simple-methods.html",
+  "doi_url": "https://otexts.com/fpp3/simple-methods.html",
+  "strategy": "y(T+k) = y(T+k - m*ceil(k/m)), m = 1 day",
+  "probabilistic": false,
+  "hyperparameters": {
+   "short": {
+    "season_m": 288
+   },
+   "long": {
+    "season_m": 24
+   }
+  },
+  "train_info": {
+   "short": {
+    "train_seconds": 0.0,
+    "predict_seconds": 0.08,
+    "fit_seconds_wall": 0.0,
+    "nonfinite_pred_fraction": 0.0
+   },
+   "long": {
+    "train_seconds": 0.0,
+    "predict_seconds": 0.03,
+    "fit_seconds_wall": 0.0,
+    "nonfinite_pred_fraction": 0.0
+   }
+  }
+ },
+ {
+  "key": "naive",
+  "name": "Naive",
+  "family": "Baseline",
+  "paper": "Hyndman, R. J. & Athanasopoulos, G. (2021). Forecasting: Principles and Practice, 3rd ed. OTexts.",
+  "year": 2021,
+  "description": "Baseline: giữ nguyên giá trị quan sát cuối cùng.",
+  "doi": null,
+  "url": "https://otexts.com/fpp3/simple-methods.html",
+  "doi_url": "https://otexts.com/fpp3/simple-methods.html",
+  "strategy": "y(T+k) = last observed value",
+  "probabilistic": false,
+  "hyperparameters": {
+   "short": {},
+   "long": {}
+  },
+  "train_info": {
+   "short": {
+    "train_seconds": 0.0,
+    "predict_seconds": 0.01,
+    "fit_seconds_wall": 0.0,
+    "nonfinite_pred_fraction": 0.0
+   },
+   "long": {
+    "train_seconds": 0.0,
+    "predict_seconds": 0.01,
+    "fit_seconds_wall": 0.0,
+    "nonfinite_pred_fraction": 0.0
+   }
+  }
+ }
+]

@@ -1,0 +1,31 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+
+    "data": {
+      "$date": {
+        ".validate": "$date.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)",
+        "$time": {
+          ".validate": "$time.matches(/^[0-9]{2}:[0-9]{2}(:[0-9]{2})?$/)"
+        }
+      }
+    },
+
+    "streaming": {
+      "config": {
+        "sampling_interval_sec": {
+          ".validate": "newData.isNumber() && newData.val() >= 5 && newData.val() <= 86400"
+        },
+        "irrigation_duration_min": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 120"
+        }
+      }
+    },
+
+    "logs": {
+      "firebase_writes": { "$date": { ".indexOn": ["ts"] } },
+      "sync": { "$date": { ".indexOn": ["ts"] } }
+    }
+  }
+}

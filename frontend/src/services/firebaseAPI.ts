@@ -1,19 +1,51 @@
 // Firebase API for all pages
 import { db } from '../config/firebaseConfig';
-import { ref, get, set, onValue, update, remove } from 'firebase/database';
+import {
+  ref,
+  get,
+  set,
+  onValue,
+  update,
+  remove,
+  query,
+  orderByKey,
+  startAt,
+  endAt,
+  limitToLast,
+  type DataSnapshot,
+  type Unsubscribe,
+} from 'firebase/database';
+import {
+  addDaysToKey,
+  isDateKey,
+  keysToEpochMs,
+  parseTimeKey,
+  sortTimeKeys,
+  todayDateKey,
+} from '@/lib/timeKeys';
+import { toastFirebaseWriteError } from '@/lib/firebaseErrors';
 
-// Types matching Firebase data structure
+// ==================== TYPES ====================
+
+/** Chất lượng mốc thời gian do Jetson gắn (không có RTC). */
+export type TimeQuality = 'ntp' | 'corrected' | 'estimated';
+
+// Types matching Firebase data structure (data/{YYYY-MM-DD}/{HH:MM[:SS]})
 export interface FirebaseSensorReading {
   EC: number;
   K: number;
   N: number;
   P: number;
   humidity: number;
-  light: number;
   moisture: number;
   pH: number;
   soiltemp: number;
   temperature: number;
+  /** Cảm biến ánh sáng đã bị bỏ – chỉ còn trong dữ liệu cũ. */
+  light?: number;
+  /** epoch giây (UTC) */
+  ts?: number;
+  tq?: TimeQuality;
 }
 
 export interface FirebaseSensorData {
@@ -96,9 +128,18 @@ export interface StreamingThreshold {
 }
 
 export interface StreamingControlDevice {
-  status: boolean | number; // false/true or 0/1
-  daily_time?: number; // total hours on today
-  last_on_time?: string; // last time turned on
+  /** Trạng thái MONG MUỐN (UI ghi ở chế độ manual): false/true hoặc 0/1 */
+  status: boolean | number;
+  /** Trạng thái THỰC TẾ do Jetson báo lại */
+  actual?: boolean | number;
+  /** true khi chưa có relay thật (mô phỏng) */
+  simulated?: boolean;
+  /** Tổng số giờ bật trong ngày */
+  daily_time?: number;
+  /** Lần bật gần nhất (chuỗi thời gian hoặc epoch) */
+  last_on_time?: string | number;
+  /** Server timestamp (ms) lần cập nhật gần nhất */
+  updated_at?: number;
 }
 
 // Light schedule with on/off time
@@ -115,6 +156,10 @@ export interface StreamingConfig {
       time2: number;
       [key: string]: number; // Allow additional time slots
     };
+    /** Thời lượng mỗi lần tưới theo lịch (phút), mặc định 5 */
+    irrigation_duration_min?: number;
+    /** Chu kỳ lấy mẫu cảm biến của Jetson (giây, 5..86400), mặc định 300 */
+    sampling_interval_sec?: number;
     light_mode: number | string; // 0 = manual, 1 = auto, 2 = schedule or empty string
     light_time?: {
       on: number | string;
@@ -141,10 +186,10 @@ export interface StreamingConfig {
   };
 }
 
-// ==================== LOCAL DATA SETTINGS ====================
-// Đặt true để dùng dữ liệu cục bộ soil_all.json (dùng tạm khi Firebase chưa upload dữ liệu mới)
-// Khi đã upload lên Firebase mới xong, có thể chuyển thành false
-export const USE_LOCAL_SOIL_DATA = true;
+// ==================== LOCAL DATA FALLBACK ====================
+// false = đọc dữ liệu thật từ Firebase. Tệp cục bộ soil_all.json CHỈ dùng làm
+// dự phòng khi Firebase không trả về dữ liệu hoặc bị lỗi (mất mạng, sai quyền...).
+export const USE_LOCAL_SOIL_DATA = false;
 
 let cachedSoilData: FirebaseSensorData | null = null;
 let loadPromise: Promise<FirebaseSensorData | null> | null = null;
@@ -175,93 +220,322 @@ export const loadLocalSoilData = async (): Promise<FirebaseSensorData | null> =>
   return loadPromise;
 };
 
-export const getSensorData = async (): Promise<FirebaseSensorData> => {
-  // Khi bật USE_LOCAL_SOIL_DATA, ưu tiên đọc trực tiếp từ /soil_all.json
-  if (USE_LOCAL_SOIL_DATA) {
-    const localData = await loadLocalSoilData();
-    if (localData) return localData;
-  }
+// ==================== SENSOR DATA (date-range aware) ====================
 
-  try {
-    const sensorRef = ref(db, 'data');
-    const snapshot = await get(sensorRef);
-    if (snapshot.exists()) {
-      return snapshot.val();
+/** Khoảng ngày (bao gồm 2 đầu), khóa dạng YYYY-MM-DD giờ VN. */
+export interface SensorDateRange {
+  startDate: string;
+  endDate: string;
+}
+
+export type SensorDataSource = 'firebase' | 'local' | 'none';
+
+export interface SensorRangeResult {
+  data: FirebaseSensorData;
+  source: SensorDataSource;
+  range: SensorDateRange;
+  error?: string;
+}
+
+export interface LatestSensorReading {
+  reading: FirebaseSensorReading;
+  /** "YYYY-MM-DD HH:MM[:SS]" (giữ tương thích) */
+  timestamp: string;
+  dateKey: string;
+  timeKey: string;
+  /** epoch ms của bản ghi (ưu tiên trường `ts`) */
+  epochMs: number | null;
+  source: SensorDataSource;
+}
+
+export interface FlatSensorPoint {
+  dateKey: string;
+  timeKey: string;
+  epochMs: number;
+  reading: FirebaseSensorReading;
+}
+
+export const DEFAULT_RANGE_DAYS = 3;
+
+const dataRangeQuery = (range: SensorDateRange) =>
+  query(ref(db, 'data'), orderByKey(), startAt(range.startDate), endAt(range.endDate));
+
+const latestDayQuery = () => query(ref(db, 'data'), orderByKey(), limitToLast(1));
+
+const sliceByRange = (data: FirebaseSensorData, range: SensorDateRange): FirebaseSensorData => {
+  const out: FirebaseSensorData = {};
+  for (const key of Object.keys(data)) {
+    if (isDateKey(key) && key >= range.startDate && key <= range.endDate) {
+      out[key] = data[key];
     }
-  } catch (error) {
-    console.warn('[SensorAPI] Firebase get thất bại, chuyển sang đọc /soil_all.json:', error);
   }
-
-  // Fallback đọc từ tệp soil_all.json nếu chưa đọc
-  const localData = await loadLocalSoilData();
-  if (localData) {
-    return localData;
-  }
-  throw new Error('Dữ liệu cảm biến không tồn tại');
+  return out;
 };
 
-// Get latest sensor reading
-export const getLatestSensorReading = async (): Promise<{ reading: FirebaseSensorReading; timestamp: string } | null> => {
-  const data = await getSensorData();
-  
-  // Get all dates and sort them
-  const dates = Object.keys(data).sort().reverse();
-  if (dates.length === 0) return null;
-  
-  const latestDate = dates[0];
-  const times = Object.keys(data[latestDate]).sort().reverse();
+const latestDateKeyOf = (data: FirebaseSensorData): string | null => {
+  const keys = Object.keys(data).filter(isDateKey).sort();
+  return keys.length ? keys[keys.length - 1] : null;
+};
+
+/** Chuẩn hóa `ts` (epoch giây, đề phòng ms) → epoch ms. */
+export const readingEpochMs = (
+  reading: FirebaseSensorReading | undefined,
+  dateKey: string,
+  timeKey: string,
+): number | null => {
+  const ts = reading?.ts;
+  if (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) {
+    return ts > 1e12 ? ts : ts * 1000;
+  }
+  return keysToEpochMs(dateKey, timeKey);
+};
+
+/** Làm phẳng dữ liệu {ngày: {giờ: bản ghi}} → mảng điểm đã sắp xếp theo thời gian. */
+export const flattenSensorData = (data: FirebaseSensorData | null | undefined): FlatSensorPoint[] => {
+  if (!data) return [];
+  const points: FlatSensorPoint[] = [];
+  for (const dateKey of Object.keys(data).filter(isDateKey).sort()) {
+    const day = data[dateKey];
+    if (!day || typeof day !== 'object') continue;
+    for (const timeKey of sortTimeKeys(Object.keys(day).filter((k) => parseTimeKey(k) !== null))) {
+      const reading = day[timeKey];
+      if (!reading || typeof reading !== 'object') continue;
+      const epochMs = keysToEpochMs(dateKey, timeKey);
+      if (epochMs === null) continue;
+      points.push({ dateKey, timeKey, epochMs, reading });
+    }
+  }
+  return points;
+};
+
+const extractLatestFromDay = (
+  dateKey: string,
+  day: Record<string, FirebaseSensorReading> | null | undefined,
+  source: SensorDataSource,
+): LatestSensorReading | null => {
+  if (!day || typeof day !== 'object') return null;
+  const times = sortTimeKeys(Object.keys(day).filter((k) => parseTimeKey(k) !== null));
   if (times.length === 0) return null;
-  
-  const latestTime = times[0];
+  const timeKey = times[times.length - 1];
+  const reading = day[timeKey];
+  if (!reading) return null;
   return {
-    reading: data[latestDate][latestTime],
-    timestamp: `${latestDate} ${latestTime}`,
+    reading,
+    timestamp: `${dateKey} ${timeKey}`,
+    dateKey,
+    timeKey,
+    epochMs: readingEpochMs(reading, dateKey, timeKey),
+    source,
   };
 };
 
-// Subscribe to real-time sensor updates with local fallback
-export const subscribeSensorData = (callback: (data: FirebaseSensorData) => void) => {
-  // Nếu bật chế độ dùng tạm dữ liệu cục bộ soil_all.json
-  if (USE_LOCAL_SOIL_DATA) {
-    loadLocalSoilData().then((localData) => {
-      if (localData) {
-        callback(localData);
-      }
-    });
-    return () => {};
+const extractLatestFromData = (data: FirebaseSensorData, source: SensorDataSource): LatestSensorReading | null => {
+  const keys = Object.keys(data).filter(isDateKey).sort().reverse();
+  for (const key of keys) {
+    const latest = extractLatestFromDay(key, data[key], source);
+    if (latest) return latest;
   }
+  return null;
+};
 
-  const sensorRef = ref(db, 'data');
+const firstChild = (snapshot: DataSnapshot): { key: string; value: Record<string, FirebaseSensorReading> } | null => {
+  let found: { key: string; value: Record<string, FirebaseSensorReading> } | null = null;
+  snapshot.forEach((child) => {
+    if (child.key) {
+      found = { key: child.key, value: child.val() };
+    }
+  });
+  return found;
+};
+
+/**
+ * Tìm ngày mới nhất có dữ liệu (query limitToLast(1) – không tải toàn bộ /data).
+ */
+export const getLatestDateKey = async (): Promise<{ dateKey: string | null; source: SensorDataSource }> => {
+  if (!USE_LOCAL_SOIL_DATA) {
+    try {
+      const snapshot = await get(latestDayQuery());
+      const child = snapshot.exists() ? firstChild(snapshot) : null;
+      if (child && isDateKey(child.key)) {
+        return { dateKey: child.key, source: 'firebase' };
+      }
+    } catch (error) {
+      console.warn('[SensorAPI] Không lấy được ngày mới nhất từ Firebase, dùng dữ liệu cục bộ:', error);
+    }
+  }
+  const local = await loadLocalSoilData();
+  const dateKey = local ? latestDateKeyOf(local) : null;
+  return { dateKey, source: dateKey ? 'local' : 'none' };
+};
+
+/** Khoảng `days` ngày tính ngược từ ngày có dữ liệu mới nhất. */
+export const buildRangeEndingAt = (endDate: string, days: number): SensorDateRange => ({
+  startDate: addDaysToKey(endDate, -(Math.max(1, Math.floor(days)) - 1)),
+  endDate,
+});
+
+/** Khoảng mặc định: `days` ngày gần nhất tính theo ngày có dữ liệu mới nhất. */
+export const resolveDefaultRange = async (
+  days: number = DEFAULT_RANGE_DAYS,
+): Promise<{ range: SensorDateRange; source: SensorDataSource }> => {
+  const { dateKey, source } = await getLatestDateKey();
+  return { range: buildRangeEndingAt(dateKey ?? todayDateKey(), days), source };
+};
+
+/** Đọc một lần dữ liệu cảm biến trong khoảng ngày. */
+export const getSensorDataRange = async (range: SensorDateRange): Promise<SensorRangeResult> => {
+  let errorText: string | undefined;
+  if (!USE_LOCAL_SOIL_DATA) {
+    try {
+      const snapshot = await get(dataRangeQuery(range));
+      if (snapshot.exists()) {
+        return { data: snapshot.val() as FirebaseSensorData, source: 'firebase', range };
+      }
+    } catch (error) {
+      errorText = error instanceof Error ? error.message : String(error);
+      console.warn('[SensorAPI] Firebase get thất bại, chuyển sang đọc /soil_all.json:', error);
+    }
+  }
+  const local = await loadLocalSoilData();
+  if (local) {
+    const sliced = sliceByRange(local, range);
+    if (Object.keys(sliced).length > 0) {
+      return { data: sliced, source: 'local', range, error: errorText };
+    }
+  }
+  return { data: {}, source: 'none', range, error: errorText };
+};
+
+/**
+ * Lắng nghe realtime dữ liệu cảm biến trong khoảng ngày.
+ * Nếu Firebase rỗng/lỗi → dùng soil_all.json (đã cắt theo khoảng) làm dự phòng.
+ */
+export const subscribeSensorDataRange = (
+  range: SensorDateRange,
+  callback: (result: SensorRangeResult) => void,
+): Unsubscribe => {
+  let cancelled = false;
   let hasReceivedFirebase = false;
 
+  const applyLocalFallback = (errorText?: string) => {
+    loadLocalSoilData().then((local) => {
+      if (cancelled || hasReceivedFirebase) return;
+      const sliced = local ? sliceByRange(local, range) : {};
+      callback({
+        data: sliced,
+        source: Object.keys(sliced).length > 0 ? 'local' : 'none',
+        range,
+        error: errorText,
+      });
+    });
+  };
+
+  if (USE_LOCAL_SOIL_DATA) {
+    applyLocalFallback();
+    return () => {
+      cancelled = true;
+    };
+  }
+
   const unsubscribe = onValue(
-    sensorRef,
+    dataRangeQuery(range),
     (snapshot) => {
       if (snapshot.exists()) {
         hasReceivedFirebase = true;
-        callback(snapshot.val());
-      } else if (!hasReceivedFirebase) {
-        loadLocalSoilData().then((localData) => {
-          if (localData && !hasReceivedFirebase) {
-            callback(localData);
-          }
-        });
+        callback({ data: snapshot.val() as FirebaseSensorData, source: 'firebase', range });
+      } else if (hasReceivedFirebase) {
+        callback({ data: {}, source: 'firebase', range });
+      } else {
+        applyLocalFallback();
       }
     },
     (error) => {
       console.warn('[SensorAPI] Firebase listen error, using local fallback:', error);
-      if (!hasReceivedFirebase) {
-        loadLocalSoilData().then((localData) => {
-          if (localData) callback(localData);
-        });
-      }
-    }
+      if (!hasReceivedFirebase) applyLocalFallback(error.message);
+    },
   );
 
-  return unsubscribe;
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
 };
 
-// ==================== CONTROL API ====================
+/** Lắng nghe realtime bản ghi mới nhất (chỉ ngày mới nhất – limitToLast(1)). */
+export const subscribeLatestReading = (
+  callback: (latest: LatestSensorReading | null) => void,
+): Unsubscribe => {
+  let cancelled = false;
+  let hasReceivedFirebase = false;
+
+  const applyLocalFallback = () => {
+    loadLocalSoilData().then((local) => {
+      if (cancelled || hasReceivedFirebase) return;
+      callback(local ? extractLatestFromData(local, 'local') : null);
+    });
+  };
+
+  if (USE_LOCAL_SOIL_DATA) {
+    applyLocalFallback();
+    return () => {
+      cancelled = true;
+    };
+  }
+
+  const unsubscribe = onValue(
+    latestDayQuery(),
+    (snapshot) => {
+      const child = snapshot.exists() ? firstChild(snapshot) : null;
+      const latest = child ? extractLatestFromDay(child.key, child.value, 'firebase') : null;
+      if (latest) {
+        hasReceivedFirebase = true;
+        callback(latest);
+      } else if (!hasReceivedFirebase) {
+        applyLocalFallback();
+      }
+    },
+    (error) => {
+      console.warn('[SensorAPI] Lỗi lắng nghe bản ghi mới nhất, dùng dữ liệu cục bộ:', error);
+      if (!hasReceivedFirebase) applyLocalFallback();
+    },
+  );
+
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
+};
+
+// Get latest sensor reading
+export const getLatestSensorReading = async (): Promise<LatestSensorReading | null> => {
+  if (!USE_LOCAL_SOIL_DATA) {
+    try {
+      const snapshot = await get(latestDayQuery());
+      const child = snapshot.exists() ? firstChild(snapshot) : null;
+      const latest = child ? extractLatestFromDay(child.key, child.value, 'firebase') : null;
+      if (latest) return latest;
+    } catch (error) {
+      console.warn('[SensorAPI] Firebase get bản ghi mới nhất thất bại, dùng dữ liệu cục bộ:', error);
+    }
+  }
+  const local = await loadLocalSoilData();
+  return local ? extractLatestFromData(local, 'local') : null;
+};
+
+/**
+ * Đọc dữ liệu cảm biến theo khoảng ngày (mặc định: 3 ngày gần nhất).
+ * KHÔNG còn tải toàn bộ node /data.
+ */
+export const getSensorData = async (range?: SensorDateRange): Promise<FirebaseSensorData> => {
+  const effectiveRange = range ?? (await resolveDefaultRange()).range;
+  const result = await getSensorDataRange(effectiveRange);
+  if (result.source === 'none') {
+    throw new Error('Dữ liệu cảm biến không tồn tại');
+  }
+  return result.data;
+};
+
+// ==================== CONTROL API (legacy `controls` node) ====================
 export const getControlData = async (): Promise<FirebaseControlData> => {
   const controlRef = ref(db, 'controls');
   const snapshot = await get(controlRef);
@@ -335,13 +609,13 @@ export const subscribeAlerts = (callback: (data: FirebaseAlertData[]) => void) =
   });
 };
 
-// Cập nhật cảnh báo
+// Cập nhật cảnh báo (giao diện vẫn giữ thay đổi cục bộ; lỗi quyền ghi được báo bằng toast)
 export const updateAlert = async (id: string, data: Partial<FirebaseAlertData>): Promise<void> => {
   try {
     const alertRef = ref(db, `notifications/${id}`);
     await update(alertRef, data);
   } catch (error) {
-    console.warn(`[Firebase] Không thể cập nhật cảnh báo ${id}:`, error);
+    toastFirebaseWriteError(error, `Không thể cập nhật cảnh báo ${id} lên Firebase`);
   }
 };
 
@@ -388,7 +662,7 @@ export const deleteAlert = async (id: string): Promise<void> => {
     const alertRef = ref(db, `notifications/${id}`);
     await remove(alertRef);
   } catch (error) {
-    console.warn(`[Firebase] Không thể xóa cảnh báo ${id}:`, error);
+    toastFirebaseWriteError(error, `Không thể xóa cảnh báo ${id} trên Firebase`);
   }
 };
 
@@ -476,15 +750,24 @@ export const getStreamingConfig = async (): Promise<StreamingConfig | null> => {
   const streamingRef = ref(db, 'streaming');
   const snapshot = await get(streamingRef);
   if (snapshot.exists()) {
-    return snapshot.val();
+    return mergeStreamingConfig(snapshot.val());
   }
   return null;
 };
+
+export const DEFAULT_SAMPLING_INTERVAL_SEC = 300;
+export const MIN_SAMPLING_INTERVAL_SEC = 5;
+export const MAX_SAMPLING_INTERVAL_SEC = 86400;
+export const DEFAULT_IRRIGATION_DURATION_MIN = 5;
+export const MIN_IRRIGATION_DURATION_MIN = 1;
+export const MAX_IRRIGATION_DURATION_MIN = 120;
 
 export const defaultStreamingConfig: StreamingConfig = {
   config: {
     irrigation_mode: 1,
     irrigation_time: { time1: 6, time2: 17 },
+    irrigation_duration_min: DEFAULT_IRRIGATION_DURATION_MIN,
+    sampling_interval_sec: DEFAULT_SAMPLING_INTERVAL_SEC,
     light_mode: 1,
     light_time: { on: 6, off: 18 },
     plant: {
@@ -508,6 +791,54 @@ export const defaultStreamingConfig: StreamingConfig = {
   },
 };
 
+/** Gộp sâu dữ liệu `/streaming` từ Firebase với cấu hình mặc định để tránh crash khi node mới chỉ có một phần khoá. */
+export const mergeStreamingConfig = (raw: unknown): StreamingConfig => {
+  const obj = raw && typeof raw === 'object' ? (raw as Partial<StreamingConfig>) : {};
+  const cfg: Partial<StreamingConfig['config']> =
+    obj.config && typeof obj.config === 'object' ? obj.config : {};
+  const ctl: Partial<StreamingConfig['control']> =
+    obj.control && typeof obj.control === 'object' ? obj.control : {};
+  const defCfg = defaultStreamingConfig.config;
+  const defCtl = defaultStreamingConfig.control;
+  return {
+    config: {
+      ...defCfg,
+      ...cfg,
+      irrigation_time: {
+        ...defCfg.irrigation_time,
+        ...(cfg.irrigation_time && typeof cfg.irrigation_time === 'object' ? cfg.irrigation_time : {}),
+      },
+      light_time: {
+        ...defCfg.light_time,
+        ...(cfg.light_time && typeof cfg.light_time === 'object' ? cfg.light_time : {}),
+      },
+      plant: {
+        ...defCfg.plant,
+        ...(cfg.plant && typeof cfg.plant === 'object' ? cfg.plant : {}),
+      },
+      threshold: {
+        nitrogen: { ...defCfg.threshold.nitrogen, ...(cfg.threshold?.nitrogen ?? {}) },
+        phosphorus: { ...defCfg.threshold.phosphorus, ...(cfg.threshold?.phosphorus ?? {}) },
+        potassium: { ...defCfg.threshold.potassium, ...(cfg.threshold?.potassium ?? {}) },
+        soil_ec: { ...defCfg.threshold.soil_ec, ...(cfg.threshold?.soil_ec ?? {}) },
+        soil_moisture: { ...defCfg.threshold.soil_moisture, ...(cfg.threshold?.soil_moisture ?? {}) },
+        soil_ph: { ...defCfg.threshold.soil_ph, ...(cfg.threshold?.soil_ph ?? {}) },
+        soil_temperature: { ...defCfg.threshold.soil_temperature, ...(cfg.threshold?.soil_temperature ?? {}) },
+      },
+    },
+    control: {
+      light: {
+        ...defCtl.light,
+        ...(ctl.light && typeof ctl.light === 'object' ? ctl.light : {}),
+      },
+      pump: {
+        ...defCtl.pump,
+        ...(ctl.pump && typeof ctl.pump === 'object' ? ctl.pump : {}),
+      },
+    },
+  };
+};
+
 // Subscribe to real-time streaming config updates (for thresholds)
 export const subscribeStreamingConfig = (callback: (data: StreamingConfig | null) => void) => {
   const streamingRef = ref(db, 'streaming');
@@ -515,7 +846,7 @@ export const subscribeStreamingConfig = (callback: (data: StreamingConfig | null
     streamingRef,
     (snapshot) => {
       if (snapshot.exists()) {
-        callback(snapshot.val());
+        callback(mergeStreamingConfig(snapshot.val()));
       } else {
         callback(defaultStreamingConfig);
       }
@@ -528,6 +859,8 @@ export const subscribeStreamingConfig = (callback: (data: StreamingConfig | null
 };
 
 // ==================== STREAMING CONTROL API ====================
+// Các hàm ghi dưới đây ném lỗi (kể cả PERMISSION_DENIED) cho nơi gọi xử lý bằng toast
+// (xem `toastFirebaseWriteError` trong '@/lib/firebaseErrors').
 
 // Set pump irrigation mode (0 = manual, 1 = auto, 2 = schedule)
 export const setStreamingIrrigationMode = async (mode: number): Promise<void> => {
@@ -568,18 +901,78 @@ export const setStreamingLightTime = async (on: number, off: number): Promise<vo
   await set(timeRef2, off);
 };
 
-// Helper to get control device status
-export const getControlDeviceStatus = (device: StreamingControlDevice | number | boolean): { status: boolean; daily_time: number; last_on_time: string } => {
-  if (typeof device === 'number') {
-    return { status: device === 1, daily_time: 0, last_on_time: '' };
+/** Lắng nghe 1 trường trong streaming/config (null nếu chưa có / lỗi đọc). */
+export const subscribeStreamingConfigField = (
+  field: 'sampling_interval_sec' | 'irrigation_duration_min',
+  callback: (value: number | null) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe =>
+  onValue(
+    ref(db, `streaming/config/${field}`),
+    (snapshot) => {
+      const v = snapshot.val();
+      const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+      callback(Number.isFinite(n) ? n : null);
+    },
+    (error) => {
+      console.warn(`[Firebase] Lỗi đọc streaming/config/${field}:`, error);
+      callback(null);
+      onError?.(error);
+    },
+  );
+
+/** Ghi chu kỳ lấy mẫu cảm biến (giây, số nguyên 5..86400) – Jetson đọc lại mỗi 15 s. */
+export const setSamplingIntervalSec = async (seconds: number): Promise<void> => {
+  if (!Number.isInteger(seconds) || seconds < MIN_SAMPLING_INTERVAL_SEC || seconds > MAX_SAMPLING_INTERVAL_SEC) {
+    throw new RangeError(
+      `Chu kỳ lấy mẫu phải là số nguyên từ ${MIN_SAMPLING_INTERVAL_SEC} đến ${MAX_SAMPLING_INTERVAL_SEC} giây`,
+    );
   }
-  if (typeof device === 'boolean') {
-    return { status: device, daily_time: 0, last_on_time: '' };
+  await set(ref(db, 'streaming/config/sampling_interval_sec'), seconds);
+};
+
+/** Ghi thời lượng mỗi lần tưới theo lịch (phút, số nguyên 1..120). */
+export const setIrrigationDurationMin = async (minutes: number): Promise<void> => {
+  if (!Number.isInteger(minutes) || minutes < MIN_IRRIGATION_DURATION_MIN || minutes > MAX_IRRIGATION_DURATION_MIN) {
+    throw new RangeError(
+      `Thời lượng tưới phải là số nguyên từ ${MIN_IRRIGATION_DURATION_MIN} đến ${MAX_IRRIGATION_DURATION_MIN} phút`,
+    );
+  }
+  await set(ref(db, 'streaming/config/irrigation_duration_min'), minutes);
+};
+
+export interface ControlDeviceInfo {
+  /** Trạng thái mong muốn */
+  status: boolean;
+  /** Trạng thái thực tế do thiết bị báo lại (null = chưa báo) */
+  actual: boolean | null;
+  simulated: boolean;
+  daily_time: number;
+  last_on_time: string | number;
+  updated_at: number | null;
+}
+
+const toBool = (v: unknown): boolean | null => {
+  if (v === true || v === 1 || v === '1' || v === 'true') return true;
+  if (v === false || v === 0 || v === '0' || v === 'false') return false;
+  return null;
+};
+
+// Helper to get control device status
+export const getControlDeviceStatus = (device: StreamingControlDevice | number | boolean | null | undefined): ControlDeviceInfo => {
+  if (device === null || device === undefined) {
+    return { status: false, actual: null, simulated: false, daily_time: 0, last_on_time: '', updated_at: null };
+  }
+  if (typeof device === 'number' || typeof device === 'boolean') {
+    return { status: toBool(device) ?? false, actual: null, simulated: false, daily_time: 0, last_on_time: '', updated_at: null };
   }
   return {
-    status: device.status === true || device.status === 1,
-    daily_time: device.daily_time ?? 0,
+    status: toBool(device.status) ?? false,
+    actual: toBool(device.actual),
+    simulated: device.simulated === true,
+    daily_time: typeof device.daily_time === 'number' ? device.daily_time : 0,
     last_on_time: device.last_on_time ?? '',
+    updated_at: typeof device.updated_at === 'number' ? device.updated_at : null,
   };
 };
 

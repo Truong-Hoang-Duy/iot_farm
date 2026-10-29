@@ -14,6 +14,9 @@ import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import ChangePassword from "./pages/ChangePassword";
 import NotFound from "./pages/NotFound";
+import ModelLab from "./pages/ModelLab";
+import Weather from "./pages/Weather";
+import Logs from "./pages/Logs";
 
 const queryClient = new QueryClient();
 
@@ -42,6 +45,9 @@ function AppRoutes() {
       <Route path="/alerts" element={<ProtectedRoute><Layout><Alerts /></Layout></ProtectedRoute>} />
       <Route path="/controls" element={<ProtectedRoute><Layout><Controls /></Layout></ProtectedRoute>} />
       <Route path="/recommendations" element={<ProtectedRoute><Layout><Recommendations /></Layout></ProtectedRoute>} />
+      <Route path="/models" element={<ProtectedRoute><Layout><ModelLab /></Layout></ProtectedRoute>} />
+      <Route path="/weather" element={<ProtectedRoute><Layout><Weather /></Layout></ProtectedRoute>} />
+      <Route path="/logs" element={<ProtectedRoute><Layout><Logs /></Layout></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>} />
       <Route path="/change-password" element={<ProtectedRoute><Layout><ChangePassword /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />

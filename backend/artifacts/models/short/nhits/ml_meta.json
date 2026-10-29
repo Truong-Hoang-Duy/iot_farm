@@ -1,0 +1,46 @@
+{
+ "best_step": 1100,
+ "hparams": {
+  "h": 144,
+  "input_size": 576,
+  "learning_rate": 0.001,
+  "max_steps": 1500,
+  "val_check_steps": 100,
+  "early_stop_patience_steps": 5,
+  "batch_size": 32,
+  "windows_batch_size": 512,
+  "inference_windows_batch_size": 1024,
+  "scaler_type": "robust",
+  "random_seed": 42,
+  "step_size": 6,
+  "n_pool_kernel_size": [
+   16,
+   8,
+   1
+  ],
+  "n_freq_downsample": [
+   24,
+   12,
+   1
+  ],
+  "mlp_units": [
+   [
+    512,
+    512
+   ],
+   [
+    512,
+    512
+   ],
+   [
+    512,
+    512
+   ]
+  ],
+  "dropout_prob_theta": 0.1
+ },
+ "futr_exog": [
+  "hour_sin",
+  "hour_cos"
+ ]
+}

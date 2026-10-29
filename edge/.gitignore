@@ -1,0 +1,10 @@
+# Dữ liệu cục bộ của agent (không commit)
+data/
+logs/
+config.ini
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
