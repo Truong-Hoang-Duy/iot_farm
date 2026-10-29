@@ -9,7 +9,9 @@
     "dev:backend": "cd backend && python -m uvicorn app.main:app --reload --port 8000",
     "build:frontend": "cd frontend && npm run build",
     "install:frontend": "cd frontend && npm install",
-    "install:backend": "cd backend && pip install -r requirements.txt"
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "firebase:login": "npx firebase-tools login",
+    "deploy:frontend": "npm run build:frontend && npx firebase-tools deploy --only hosting"
   },
   "keywords": [
     "iot",
