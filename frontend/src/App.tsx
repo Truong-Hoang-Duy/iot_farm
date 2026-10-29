@@ -11,6 +11,9 @@ import Alerts from "./pages/Alerts";
 import Controls from "./pages/Controls";
 import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
+import Weather from "./pages/Weather";
+import Logs from "./pages/Logs";
+import ModelLab from "./pages/ModelLab";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -23,6 +26,9 @@ function AppRoutes() {
       <Route path="/alerts" element={<Layout><Alerts /></Layout>} />
       <Route path="/controls" element={<Layout><Controls /></Layout>} />
       <Route path="/recommendations" element={<Layout><Recommendations /></Layout>} />
+      <Route path="/weather" element={<Layout><Weather /></Layout>} />
+      <Route path="/model-lab" element={<Layout><ModelLab /></Layout>} />
+      <Route path="/logs" element={<Layout><Logs /></Layout>} />
       <Route path="/settings" element={<Layout><Settings /></Layout>} />
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="/change-password" element={<Navigate to="/settings" replace />} />

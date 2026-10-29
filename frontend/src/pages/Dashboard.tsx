@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Thermometer, Droplets, FlaskConical, Zap, Atom, Wind } from 'lucide-react';
 import { SensorCard } from '@/components/dashboard/SensorCard';
+import { DeviceStatusCard } from '@/components/dashboard/DeviceStatusCard';
 import SensorChart from '@/components/dashboard/SensorChart';
 import {
   subscribeSensorData,
@@ -136,6 +137,9 @@ export default function Dashboard() {
           Cập nhật: {formatDateTimeVN(lastUpdate)}
         </div>
       </div>
+
+      {/* Trạng thái thiết bị biên Jetson Nano */}
+      <DeviceStatusCard />
 
       {/* Main Sensors */}
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">

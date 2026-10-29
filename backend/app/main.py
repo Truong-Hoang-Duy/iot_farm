@@ -11,6 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.recommendations import router as recommendations_router
 from app.api.sensors import router as sensors_router
 from app.api.alerts import router as alerts_router
+from app.api.weather import router as weather_router
+
+try:
+    from app.api.forecast import router as forecast_router
+except Exception as _e:
+    forecast_router = None
+    print(f"[Main] Module dự báo chuỗi thời gian chưa khả dụng: {_e}")
+
 from app.core.config import is_gemini_configured, GEMINI_MODEL
 from app.services.scheduler import auto_recommendation_worker
 from app.services.sensor_processing_service import get_processed_sensor_bundle
@@ -59,6 +67,9 @@ app.add_middleware(
 app.include_router(sensors_router, prefix="/api")
 app.include_router(recommendations_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
+app.include_router(weather_router, prefix="/api")
+if forecast_router is not None:
+    app.include_router(forecast_router, prefix="/api")
 
 @app.get("/")
 def read_root():

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatDateVN } from '@/lib/utils';
+import { SamplingIntervalCard } from '@/components/settings/SamplingIntervalCard';
 import {
   fetchProcessedStagesSummary,
   subscribeStreamingConfig,
@@ -392,6 +393,9 @@ export default function SettingsPage() {
           </Table>
         </div>
       </div>
+
+      {/* 3. CẤU HÌNH THỜI GIAN LẤY MẪU & TƯỚI THIẾT BỊ */}
+      <SamplingIntervalCard />
     </div>
   );
 }

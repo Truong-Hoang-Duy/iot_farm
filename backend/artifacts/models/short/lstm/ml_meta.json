@@ -1,0 +1,27 @@
+{
+ "hparams": {
+  "h": 144,
+  "input_size": 576,
+  "hidden_size": 128,
+  "num_layers": 2,
+  "dropout": 0.1,
+  "learning_rate": 0.001,
+  "batch_size": 256,
+  "max_steps": 2000,
+  "val_check_steps": 100,
+  "early_stop_patience_steps": 6,
+  "max_val_windows": 4096,
+  "loss": "pinball q=(0.1,0.5,0.9)",
+  "scaler": "window robust (median/IQR)",
+  "random_seed": 42,
+  "architecture": "LSTM encoder -> last hidden + future-exog MLP -> H x 3 quantiles"
+ },
+ "futr_exog": [
+  "hour_sin",
+  "hour_cos"
+ ],
+ "use_weather": false,
+ "wstats": null,
+ "best_step": 1600,
+ "impl": "lstm_direct"
+}

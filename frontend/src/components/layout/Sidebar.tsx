@@ -7,6 +7,9 @@ import {
   Settings, 
   Power, 
   BookOpen,
+  CloudSun,
+  LineChart,
+  ScrollText,
   Menu,
   X,
   PanelLeftClose,
@@ -15,13 +18,17 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { cn, formatDateTimeVN } from '@/lib/utils';
+import { DeviceOnlineIndicator } from '@/components/layout/DeviceOnlineIndicator';
 
 const navigation = [
   { name: 'Tổng quan', href: '/', icon: LayoutDashboard },
   { name: 'Thông tin cây trồng', href: '/plant', icon: Leaf },
+  { name: 'Thời tiết', href: '/weather', icon: CloudSun },
   { name: 'Cảnh báo', href: '/alerts', icon: AlertTriangle },
   { name: 'Điều khiển', href: '/controls', icon: Power },
+  { name: 'Dự báo & Model', href: '/model-lab', icon: LineChart },
   { name: 'Khuyến nghị', href: '/recommendations', icon: BookOpen },
+  { name: 'Nhật ký thiết bị', href: '/logs', icon: ScrollText },
   { name: 'Cài đặt', href: '/settings', icon: Settings },
 ];
 
@@ -162,25 +169,23 @@ export function Sidebar({ isCollapsed = false, onToggleCollapse }: SidebarProps)
             </div>
           )}
 
-          {/* System Status */}
+          {/* System & Device Status */}
           <div className="border-t border-border p-3">
             <div
               className={cn(
                 "rounded-xl bg-secondary/50 p-3 transition-all",
                 isCollapsed && "lg:flex lg:items-center lg:justify-center lg:p-2.5"
               )}
-              title={isCollapsed ? "Kết nối: Trực tuyến" : undefined}
+              title={isCollapsed ? "Trạng thái thiết bị Jetson" : undefined}
             >
               <div className={cn("hidden", isCollapsed && "lg:block")}>
                 <span className="block h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" />
               </div>
-              <div className={cn(isCollapsed && "lg:hidden")}>
-                <p className="text-xs text-muted-foreground">
-                  Kết nối: <span className="text-success font-medium">Trực tuyến</span>
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Cập nhật: {formatDateTimeVN(new Date())}
-                </p>
+              <div className={cn("space-y-2", isCollapsed && "lg:hidden")}>
+                <DeviceOnlineIndicator />
+                <div className="pt-1.5 border-t border-border/40 text-[11px] text-muted-foreground">
+                  Hệ thống: {formatDateTimeVN(new Date())}
+                </div>
               </div>
             </div>
           </div>

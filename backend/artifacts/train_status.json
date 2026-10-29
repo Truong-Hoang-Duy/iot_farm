@@ -1,0 +1,12 @@
+{
+ "state": "done",
+ "stage": "done",
+ "progress": 1.0,
+ "quick": false,
+ "pid": 38684,
+ "started_at": "2026-10-29T13:22:01+07:00",
+ "updated_at": "2026-10-29T13:45:33+07:00",
+ "message": "finished in 1411.4s",
+ "error": null,
+ "finished_at": "2026-10-29T13:45:33+07:00"
+}

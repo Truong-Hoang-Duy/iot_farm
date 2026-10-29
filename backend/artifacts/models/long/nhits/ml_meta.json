@@ -1,0 +1,54 @@
+{
+ "best_step": 100,
+ "hparams": {
+  "h": 120,
+  "input_size": 336,
+  "learning_rate": 0.001,
+  "max_steps": 1500,
+  "val_check_steps": 100,
+  "early_stop_patience_steps": 5,
+  "batch_size": 32,
+  "windows_batch_size": 512,
+  "inference_windows_batch_size": 1024,
+  "scaler_type": "robust",
+  "random_seed": 42,
+  "step_size": 1,
+  "n_pool_kernel_size": [
+   8,
+   4,
+   1
+  ],
+  "n_freq_downsample": [
+   24,
+   12,
+   1
+  ],
+  "mlp_units": [
+   [
+    512,
+    512
+   ],
+   [
+    512,
+    512
+   ],
+   [
+    512,
+    512
+   ]
+  ],
+  "dropout_prob_theta": 0.1
+ },
+ "futr_exog": [
+  "hour_sin",
+  "hour_cos",
+  "temperature_2m",
+  "relative_humidity_2m",
+  "precipitation",
+  "shortwave_radiation",
+  "et0_fao_evapotranspiration",
+  "cloud_cover",
+  "vapour_pressure_deficit",
+  "wind_speed_10m"
+ ]
+}

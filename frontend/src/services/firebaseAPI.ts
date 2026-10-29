@@ -1,6 +1,6 @@
 // Firebase API (Controls & Config) + Backend Sensor API
 import { db } from '../config/firebaseConfig';
-import { ref, get, set, onValue, update, remove } from 'firebase/database';
+import { ref, get, set, onValue, update, remove, type Unsubscribe } from 'firebase/database';
 
 // Types matching sensor data structure
 export interface FirebaseSensorReading {
@@ -624,3 +624,51 @@ export const updateStreamingThreshold = async (thresholds: StreamingConfig['conf
     }
   }
 };
+
+export const DEFAULT_SAMPLING_INTERVAL_SEC = 300;
+export const MIN_SAMPLING_INTERVAL_SEC = 5;
+export const MAX_SAMPLING_INTERVAL_SEC = 86400;
+export const DEFAULT_IRRIGATION_DURATION_MIN = 5;
+export const MIN_IRRIGATION_DURATION_MIN = 1;
+export const MAX_IRRIGATION_DURATION_MIN = 120;
+
+/** Lắng nghe 1 trường trong streaming/config (null nếu chưa có / lỗi đọc). */
+export const subscribeStreamingConfigField = (
+  field: 'sampling_interval_sec' | 'irrigation_duration_min',
+  callback: (value: number | null) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe =>
+  onValue(
+    ref(db, `streaming/config/${field}`),
+    (snapshot) => {
+      const v = snapshot.val();
+      const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+      callback(Number.isFinite(n) ? n : null);
+    },
+    (error) => {
+      console.warn(`[Firebase] Lỗi đọc streaming/config/${field}:`, error);
+      callback(null);
+      onError?.(error);
+    },
+  );
+
+/** Ghi chu kỳ lấy mẫu cảm biến (giây, số nguyên 5..86400) – Jetson đọc lại mỗi 15 s. */
+export const setSamplingIntervalSec = async (seconds: number): Promise<void> => {
+  if (!Number.isInteger(seconds) || seconds < MIN_SAMPLING_INTERVAL_SEC || seconds > MAX_SAMPLING_INTERVAL_SEC) {
+    throw new RangeError(
+      `Chu kỳ lấy mẫu phải là số nguyên từ ${MIN_SAMPLING_INTERVAL_SEC} đến ${MAX_SAMPLING_INTERVAL_SEC} giây`,
+    );
+  }
+  await set(ref(db, 'streaming/config/sampling_interval_sec'), seconds);
+};
+
+/** Ghi thời lượng mỗi lần tưới theo lịch (phút, số nguyên 1..120). */
+export const setIrrigationDurationMin = async (minutes: number): Promise<void> => {
+  if (!Number.isInteger(minutes) || minutes < MIN_IRRIGATION_DURATION_MIN || minutes > MAX_IRRIGATION_DURATION_MIN) {
+    throw new RangeError(
+      `Thời lượng tưới phải là số nguyên từ ${MIN_IRRIGATION_DURATION_MIN} đến ${MAX_IRRIGATION_DURATION_MIN} phút`,
+    );
+  }
+  await set(ref(db, 'streaming/config/irrigation_duration_min'), minutes);
+};
+

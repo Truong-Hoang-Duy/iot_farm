@@ -1,0 +1,56 @@
+{
+ "hparams": {
+  "h": 120,
+  "input_size": 336,
+  "hidden_size": 128,
+  "num_layers": 2,
+  "dropout": 0.1,
+  "learning_rate": 0.001,
+  "batch_size": 256,
+  "max_steps": 2000,
+  "val_check_steps": 100,
+  "early_stop_patience_steps": 6,
+  "max_val_windows": 4096,
+  "loss": "pinball q=(0.1,0.5,0.9)",
+  "scaler": "window robust (median/IQR)",
+  "random_seed": 42,
+  "architecture": "LSTM encoder -> last hidden + future-exog MLP -> H x 3 quantiles"
+ },
+ "futr_exog": [
+  "hour_sin",
+  "hour_cos",
+  "temperature_2m",
+  "relative_humidity_2m",
+  "precipitation",
+  "shortwave_radiation",
+  "et0_fao_evapotranspiration",
+  "cloud_cover",
+  "vapour_pressure_deficit",
+  "wind_speed_10m"
+ ],
+ "use_weather": true,
+ "wstats": {
+  "mean": [
+   27.922086526181356,
+   75.25909961685824,
+   0.16385696040868455,
+   237.9661558109834,
+   0.19438058748403575,
+   66.21871008939975,
+   1.0371320242656448,
+   7.844220945083014
+  ],
+  "std": [
+   3.0732298435542873,
+   16.21839190065419,
+   0.720297008397202,
+   311.3281601651008,
+   0.23417356812052037,
+   36.124338206423865,
+   0.8549949401439546,
+   3.997366945443177
+  ]
+ },
+ "best_step": 500,
+ "impl": "lstm_direct"
+}
