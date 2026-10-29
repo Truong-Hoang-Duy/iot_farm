@@ -12,6 +12,7 @@ from app.api.recommendations import router as recommendations_router
 from app.api.sensors import router as sensors_router
 from app.api.alerts import router as alerts_router
 from app.api.weather import router as weather_router
+from app.api.data import router as data_router
 
 try:
     from app.api.forecast import router as forecast_router
@@ -68,6 +69,7 @@ app.include_router(sensors_router, prefix="/api")
 app.include_router(recommendations_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(weather_router, prefix="/api")
+app.include_router(data_router, prefix="/api")
 if forecast_router is not None:
     app.include_router(forecast_router, prefix="/api")
 
