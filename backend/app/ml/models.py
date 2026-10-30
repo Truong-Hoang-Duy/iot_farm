@@ -6,6 +6,7 @@ Giao diện chung:
 """
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -26,6 +27,11 @@ log = logging.getLogger("ml.models")
 # --------------------------------------------------------------------------- device helpers
 def torch_device() -> str:
     if C.DEVICE_PREF == "cpu":
+        return "cpu"
+    import shutil
+    import sys
+
+    if "torch" not in sys.modules and shutil.which("nvidia-smi") is None:
         return "cpu"
     try:
         import torch
@@ -123,6 +129,7 @@ class XGBForecaster:
     """Direct multi-horizon "horizon-as-feature": 1 mô hình / target / nhóm.
 
     Đầu ra: hồi quy phân vị (q10, q50, q90) cho y(T+h) - y(T); dự báo điểm = q50.
+    Hỗ trợ nạp lười (lazy-load) từng biến mục tiêu khi suy luận để tiết kiệm ~800MB RAM trên Render.
     """
 
     key = "xgboost"
@@ -133,6 +140,8 @@ class XGBForecaster:
         self.quick = quick
         self.models: dict = {}
         self.best_iter: dict = {}
+        self._model_dir: Path | None = None
+        self._dev: str = "cpu"
         self.params = {
             "n_estimators": 60 if quick else 3000,
             "learning_rate": 0.05,
@@ -154,6 +163,23 @@ class XGBForecaster:
         if quick:
             self.sampling = {"origin_stride": self.sampling["origin_stride"] * 8, "h_per_origin": 6}
         self.feature_names: list[str] = []
+
+    def _get_target_model(self, t: str):
+        if t in self.models:
+            return self.models[t]
+        if self._model_dir is None:
+            raise KeyError(f"Model for target {t} is not loaded")
+        import xgboost as xgb
+
+        # Chỉ giữ tối đa 1 mô hình XGBoost trong RAM khi suy luận từ đĩa để tránh vượt 512MB RAM
+        if len(self.models) >= 1:
+            self.models.clear()
+            gc.collect()
+        m = xgb.XGBRegressor()
+        m.load_model(str(self._model_dir / f"{t}.ubj"))
+        m.set_params(device=self._dev)
+        self.models[t] = m
+        return m
 
     # -- rows
     def _sample_rows(self, gd: GroupData, lo_i: int, hi_i: int, rng) -> tuple[np.ndarray, np.ndarray]:
@@ -216,7 +242,7 @@ class XGBForecaster:
         info["train_seconds"] = round(time.time() - t0, 2)
         return info
 
-    def predict(self, ctx: Contexts) -> dict:
+    def predict(self, ctx: Contexts, targets: list[str] | None = None) -> dict:
         L = XGB_SPECS[self.group]["lookback"]
         H = ctx.H
         N = len(ctx.origins)
@@ -228,11 +254,17 @@ class XGBForecaster:
         h = np.tile(np.arange(1, H + 1), N)
         out = np.full((3, N, len(C.TARGETS), H), np.nan)
         for j, t in enumerate(C.TARGETS):
+            if targets is not None and t not in targets:
+                continue
             X, _ = fb.features(i0, h, j, hour0)
-            q = self.models[t].predict(X).reshape(N * H, -1)
+            m = self._get_target_model(t)
+            q = m.predict(X).reshape(N * H, -1)
             q = np.sort(q, axis=1) + fb.Yf[i0, j][:, None]
             for k in range(3):
                 out[k, :, j, :] = q[:, k].reshape(N, H)
+        if self._model_dir is not None:
+            self.models.clear()
+            gc.collect()
         return {"yhat": out[1], "lo": out[0], "hi": out[2]}
 
     def save(self, d: Path) -> None:
@@ -244,18 +276,12 @@ class XGBForecaster:
 
     @classmethod
     def load(cls, d: Path, group: str) -> "XGBForecaster":
-        import xgboost as xgb
-
         obj = cls(group)
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
         obj.best_iter = meta.get("best_iter", {})
         obj.feature_names = meta.get("features", [])
-        dev = "cuda" if torch_device() == "cuda" else "cpu"
-        for t in C.TARGETS:
-            m = xgb.XGBRegressor()
-            m.load_model(str(d / f"{t}.ubj"))
-            m.set_params(device=dev)
-            obj.models[t] = m
+        obj._dev = "cpu"
+        obj._model_dir = d
         return obj
 
 

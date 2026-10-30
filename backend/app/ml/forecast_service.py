@@ -4,6 +4,7 @@ Tất cả hàm ở đây là đồng bộ (blocking) — API gọi qua threadpo
 """
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import subprocess
@@ -128,6 +129,9 @@ class ForecastService:
         with self._lock:
             if ck in self._models:
                 return self._models[ck]
+            if len(self._models) >= 2:
+                self._models.clear()
+                gc.collect()
             if key == "naive":
                 mdl = NaiveForecaster(group)
             elif key == "seasonal_naive":
@@ -179,7 +183,7 @@ class ForecastService:
         except Exception:  # noqa: BLE001
             return "seasonal_naive"
 
-    def _compute(self, group: str, key: str) -> dict:
+    def _compute(self, group: str, key: str, target: str | None = None) -> dict:
         cfg = C.GROUPS[group]
         raw, src = self._raw()
         if len(raw) == 0:
@@ -215,10 +219,13 @@ class ForecastService:
                 fallback = f"weather covers only until {weather.index.max()}; remaining hours filled (ffill)"
         ctx = make_contexts(grid5, group, pd.DatetimeIndex([T]), L, weather)
         with self._infer_lock:
-            p = mdl.predict(ctx)
+            if key == "xgboost" and target is not None:
+                p = mdl.predict(ctx, targets=[target])
+            else:
+                p = mdl.predict(ctx)
         from .models import torch_device
 
-        dev = "cpu" if key in ("naive", "seasonal_naive") else torch_device()
+        dev = "cpu" if key in ("naive", "seasonal_naive", "xgboost") else torch_device()
         return {"ctx": ctx, "pred": p, "origin": T, "last_obs": last_obs, "source": src, "device": dev,
                 "weather_source": wsrc, "note": fallback, "computed_at": time.time()}
 
@@ -236,7 +243,7 @@ class ForecastService:
         key = self.resolve_model(model, target, horizon)
         if not self.model_available(key, group):
             raise ArtifactsMissing(f"Mô hình {key} ({group}) chưa được huấn luyện")
-        ck = (group, key)
+        ck = (group, key, target) if key == "xgboost" else (group, key)
         if refresh:
             with self._lock:
                 self._data_cache = None
@@ -245,8 +252,10 @@ class ForecastService:
             with self._lock:
                 hit = self._fc_cache.get(ck)
             if not hit or time.time() - hit["computed_at"] > C.FORECAST_CACHE_SEC:
-                hit = self._compute(group, key)
+                hit = self._compute(group, key, target=target if key == "xgboost" else None)
                 with self._lock:
+                    if len(self._fc_cache) >= 4:
+                        self._fc_cache.clear()
                     self._fc_cache[ck] = hit
         ctx, p = hit["ctx"], hit["pred"]
         j = C.TARGETS.index(target)
@@ -338,17 +347,8 @@ class ForecastService:
         p = C.ARTIFACTS_DIR / f"eval_forecasts_{group}.npz"
         if not p.exists():
             raise ArtifactsMissing(f"Không có kết quả dự báo tập test cho nhóm {group}")
-        mt = p.stat().st_mtime
-        ck = ("npz", group)
-        with self._lock:
-            hit = self._models.get(ck)
-            if hit and hit[0] == mt:
-                return hit[1]
-        z = np.load(p, allow_pickle=False)
-        d = {k: z[k] for k in z.files}
-        with self._lock:
-            self._models[ck] = (mt, d)
-        return d
+        with np.load(p, allow_pickle=False) as z:
+            return {k: z[k] for k in z.files}
 
     def test_predictions(self, target: str, group: str = "short", model: str | None = None,
                          last_days: float | None = None, fmt: str = "series") -> dict:

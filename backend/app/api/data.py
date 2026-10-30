@@ -59,10 +59,13 @@ async def sensor_history(
 async def sync_status():
     svc = get_sync_service()
     st = await run_in_threadpool(svc.status)
-    try:
-        st["influx_range"] = await run_in_threadpool(ix.sensor_time_range)
-    except Exception as exc:
-        st["influx_range"] = {"error": str(exc)}
+    if st.get("influx", {}).get("ok"):
+        try:
+            st["influx_range"] = await run_in_threadpool(ix.sensor_time_range)
+        except Exception as exc:
+            st["influx_range"] = {"error": str(exc)}
+    else:
+        st["influx_range"] = None
     return st
 
 
@@ -85,4 +88,3 @@ async def sync_run(direction: str = Query("both", pattern="^(both|firebase_to_in
     if direction == "firebase_to_influx":
         return {"fast": await svc.fast_sync(trigger="manual")}
     return await svc.audit(trigger="manual")
-

@@ -9,6 +9,7 @@ Bảng (table) trong database INFLUX_DB:
 from __future__ import annotations
 
 import math
+import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -19,6 +20,8 @@ from app.core.config import DEVICE_ID, FARM_TZ, INFLUX_DB, INFLUX_TOKEN, INFLUX_
 
 LOCAL_TZ_OFFSET = timedelta(hours=7)  # Asia/Ho_Chi_Minh không có DST
 SENSOR_TABLE = "sensor_data"
+_EFFECTIVE_URL = INFLUX_URL.replace("://localhost", "://127.0.0.1")
+_health_cache: Dict[str, Any] = {"at": 0.0, "res": None}
 
 
 class InfluxError(Exception):
@@ -34,8 +37,8 @@ def _headers(content_type: Optional[str] = None) -> Dict[str, str]:
     return h
 
 
-def _client(timeout: float = 60.0) -> httpx.Client:
-    return httpx.Client(base_url=INFLUX_URL, timeout=httpx.Timeout(timeout, connect=5.0))
+def _client(timeout: float = 60.0, connect_timeout: float = 1.5) -> httpx.Client:
+    return httpx.Client(base_url=_EFFECTIVE_URL, timeout=httpx.Timeout(timeout, connect=connect_timeout))
 
 
 # ---------------------------------------------------------------------------
@@ -135,17 +138,26 @@ def sensor_record_to_line(date_key: str, time_key: str, rec: Dict[str, Any], dev
 # ---------------------------------------------------------------------------
 # HTTP API
 # ---------------------------------------------------------------------------
-def health() -> Dict[str, Any]:
+def health(force: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    cached = _health_cache.get("res")
+    if not force and cached is not None and (now - _health_cache.get("at", 0.0) < 15.0):
+        return cached
     try:
-        with _client(5.0) as c:
+        with _client(1.5, connect_timeout=0.8) as c:
             r = c.get("/health", headers=_headers())
             ok = r.status_code == 200
-            return {"ok": ok, "status": r.status_code, "url": INFLUX_URL, "db": INFLUX_DB, "body": r.text[:100]}
+            res = {"ok": ok, "status": r.status_code, "url": INFLUX_URL, "db": INFLUX_DB, "body": r.text[:100]}
     except Exception as exc:
-        return {"ok": False, "url": INFLUX_URL, "db": INFLUX_DB, "error": str(exc)}
+        res = {"ok": False, "url": INFLUX_URL, "db": INFLUX_DB, "error": str(exc)}
+    _health_cache["at"] = now
+    _health_cache["res"] = res
+    return res
 
 
 def write_lines(lines: Iterable[Optional[str]], chunk: int = 5000) -> int:
+    if not health().get("ok"):
+        return 0
     buf: List[str] = []
     n = 0
     with _client(120.0) as c:
@@ -175,6 +187,8 @@ def write_lines(lines: Iterable[Optional[str]], chunk: int = 5000) -> int:
 
 def query(sql: str, timeout: float = 120.0) -> List[Dict[str, Any]]:
     """Chạy SQL, trả list dict. Bảng/database chưa tồn tại -> []."""
+    if not health().get("ok"):
+        raise InfluxError(health().get("error") or "InfluxDB chưa mở cổng kết nối")
     with _client(timeout) as c:
         r = c.post(
             "/api/v3/query_sql",
@@ -246,6 +260,8 @@ def query_sensor_df(
 
 
 def sensor_time_range() -> Dict[str, Any]:
+    if not health().get("ok"):
+        return {"ok": False, "detail": "InfluxDB phụ trợ chưa mở cổng 18181"}
     rows = query(f"SELECT min(time) AS tmin, max(time) AS tmax, count(*) AS n FROM {SENSOR_TABLE}")
     return rows[0] if rows else {}
 
@@ -276,6 +292,8 @@ def sensor_day_rows(day: str) -> List[Dict[str, Any]]:
 
 
 def write_sync_log(entry: Dict[str, Any]) -> None:
+    if not health().get("ok"):
+        return
     ts = int(datetime.now(timezone.utc).timestamp())
     line = to_line(
         "sync_log",
@@ -297,6 +315,8 @@ def write_sync_log(entry: Dict[str, Any]) -> None:
 
 
 def query_sync_logs(limit: int = 200, direction: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not health().get("ok"):
+        return []
     where = f" WHERE direction = '{direction}'" if direction else ""
     sql = (
         "SELECT time, direction, status, n_records, duration_ms, range_start, range_end, error, detail "
@@ -312,7 +332,7 @@ def query_sync_logs(limit: int = 200, direction: Optional[str] = None) -> List[D
 
 
 def write_weather_df(df: pd.DataFrame, location: str = "farm") -> int:
-    if df is None or df.empty:
+    if df is None or df.empty or not health().get("ok"):
         return 0
     lines = []
     for ts, row in df.iterrows():
@@ -320,4 +340,3 @@ def write_weather_df(df: pd.DataFrame, location: str = "farm") -> int:
         fields = {k: v for k, v in row.items() if k != "kind"}
         lines.append(to_line("weather", {"kind": kind, "location": location}, fields, int(ts.timestamp())))
     return write_lines(lines)
-

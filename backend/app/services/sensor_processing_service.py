@@ -1,3 +1,5 @@
+import asyncio
+import gc
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -7,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import numpy as np
 import pandas as pd
+from fastapi.concurrency import run_in_threadpool
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 from sklearn.preprocessing import StandardScaler
@@ -43,19 +46,23 @@ _processed_cache: Dict[str, Dict[str, Any]] = {}
 _raw_payload_cache: Optional[Dict[str, Any]] = None
 _last_firebase_sync_date: Optional[str] = None
 _last_firebase_sync_ts: float = 0.0
-_FIREBASE_CHECK_TTL_SEC = 15.0
+_FIREBASE_CHECK_TTL_SEC = 120.0
+_bundle_lock = asyncio.Lock()
 
 
-def _save_payload_to_local_files(payload: Dict[str, Any]) -> List[str]:
+def _save_payload_to_local_files(payload: Dict[str, Any], sync_public: bool = False) -> List[str]:
     saved_paths: List[str] = []
-    target_paths = [
-        CACHE_DIR / "soil_all.json",
-        PROJECT_ROOT / "frontend" / "public" / "soil_all.json",
-        PROJECT_ROOT / "visualization" / "soil_all.json",
-    ]
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target_paths = [CACHE_DIR / "soil_all.json"]
+    if sync_public:
+        for extra in (
+            PROJECT_ROOT / "frontend" / "public" / "soil_all.json",
+            PROJECT_ROOT / "visualization" / "soil_all.json",
+        ):
+            if extra.parent.exists():
+                target_paths.append(extra)
     for path in target_paths:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
             saved_paths.append(str(path))
@@ -64,54 +71,63 @@ def _save_payload_to_local_files(payload: Dict[str, Any]) -> List[str]:
     return saved_paths
 
 
-def merge_latest_days_from_firebase_sync(payload: Dict[str, Any]) -> bool:
-    """Kiểm tra danh sách ngày trên Firebase (?shallow=true) và kéo bổ sung các ngày mới / 2 ngày gần nhất."""
+def merge_latest_days_from_firebase_sync(payload: Dict[str, Any], sync_public: bool = False) -> int:
+    """Kiểm tra danh sách ngày trên Firebase (?shallow=true) và kéo bổ sung các ngày mới / 2 ngày gần nhất.
+    Trả về số bản ghi mới/cập nhật (0 nếu không có thay đổi)."""
     data_node = payload.setdefault("data", {})
-    changed = False
+    changed_records = 0
     try:
         with httpx.Client(timeout=15.0) as client:
             res = client.get(f"{FIREBASE_DB_URL}/data.json?shallow=true")
             if res.status_code != 200 or not isinstance(res.json(), dict):
-                return False
+                return 0
             fb_days = sorted(res.json().keys())
             if not fb_days:
-                return False
+                return 0
             recent_days = set(fb_days[-2:])
             missing_or_recent = [d for d in fb_days if d not in data_node or d in recent_days]
             for d in missing_or_recent:
                 day_res = client.get(f"{FIREBASE_DB_URL}/data/{d}.json")
                 if day_res.status_code == 200 and isinstance(day_res.json(), dict):
                     new_records = day_res.json()
-                    if data_node.get(d) != new_records:
+                    old_records = data_node.get(d)
+                    if old_records != new_records:
+                        old_len = len(old_records) if isinstance(old_records, dict) else 0
+                        new_len = len(new_records)
+                        changed_records += max(1, new_len - old_len)
                         data_node[d] = new_records
-                        changed = True
     except Exception as e:
         print(f"[SensorProcessing] Không thể đồng bộ nhanh ngày mới từ Firebase: {e}")
-        return False
+        return 0
 
-    if changed:
-        _save_payload_to_local_files(payload)
-    return changed
+    if changed_records > 0:
+        _save_payload_to_local_files(payload, sync_public=sync_public)
+    return changed_records
 
 
-async def sync_soil_all_from_firebase() -> Dict[str, Any]:
+def _load_local_json_sync() -> Optional[Dict[str, Any]]:
+    for path in LOCAL_JSON_PATHS:
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    return loaded if "data" in loaded else {"data": loaded}
+            except Exception:
+                pass
+    return None
+
+
+async def sync_soil_all_from_firebase(sync_public: bool = False) -> Dict[str, Any]:
     """Kéo dữ liệu mới từ Firebase về lưu vào file soil_all.json và làm mới bộ nhớ đệm."""
     global _raw_payload_cache, _processed_cache, _sync_df_cache, _last_firebase_sync_date, _last_firebase_sync_ts
     if _raw_payload_cache is None:
-        for path in LOCAL_JSON_PATHS:
-            if path.exists():
-                try:
-                    with path.open("r", encoding="utf-8") as f:
-                        loaded = json.load(f)
-                        _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
-                        break
-                except Exception:
-                    pass
+        _raw_payload_cache = await run_in_threadpool(_load_local_json_sync)
 
+    new_records = 0
     if _raw_payload_cache is not None:
-        from fastapi.concurrency import run_in_threadpool
-
-        await run_in_threadpool(merge_latest_days_from_firebase_sync, _raw_payload_cache)
+        new_records = await run_in_threadpool(
+            merge_latest_days_from_firebase_sync, _raw_payload_cache, sync_public
+        )
         payload = _raw_payload_cache
     else:
         async with httpx.AsyncClient(timeout=45.0) as client:
@@ -121,11 +137,13 @@ async def sync_soil_all_from_firebase() -> Dict[str, Any]:
             fb_data = res.json()
         payload = {"data": fb_data} if "data" not in fb_data else fb_data
         _raw_payload_cache = payload
-        _save_payload_to_local_files(payload)
+        new_records = sum(len(v) for v in payload.get("data", {}).values() if isinstance(v, dict))
+        await run_in_threadpool(_save_payload_to_local_files, payload, sync_public)
 
-    _processed_cache.clear()
-    _sync_df_cache.clear()
-    invalidate_json_df_cache()
+    if new_records > 0 or not _processed_cache:
+        _processed_cache.clear()
+        _sync_df_cache.clear()
+        invalidate_json_df_cache()
     _last_firebase_sync_date = datetime.now(VN_TZ).strftime("%Y-%m-%d")
     _last_firebase_sync_ts = time.time()
 
@@ -133,6 +151,7 @@ async def sync_soil_all_from_firebase() -> Dict[str, Any]:
     return {
         "status": "ok",
         "synced_at": datetime.now(VN_TZ).isoformat(timespec="seconds"),
+        "new_records": new_records,
         "total_days": len(days),
         "first_date": days[0] if days else None,
         "last_date": days[-1] if days else None,
@@ -145,33 +164,24 @@ async def fetch_raw_sensor_payload(force_refresh: bool = False) -> Dict[str, Any
     today_vn = datetime.now(VN_TZ).strftime("%Y-%m-%d")
     now_ts = time.time()
 
-    # Nếu đã sang ngày mới hoặc quá TTL kiểm tra nhanh, kiểm tra bản ghi mới trên Firebase
     if _last_firebase_sync_date is not None and _last_firebase_sync_date != today_vn:
         force_refresh = True
 
     if _raw_payload_cache is not None and not force_refresh:
         if now_ts - _last_firebase_sync_ts > _FIREBASE_CHECK_TTL_SEC:
-            from fastapi.concurrency import run_in_threadpool
-
             _last_firebase_sync_ts = now_ts
-            changed = await run_in_threadpool(merge_latest_days_from_firebase_sync, _raw_payload_cache)
-            if changed:
+            changed = await run_in_threadpool(merge_latest_days_from_firebase_sync, _raw_payload_cache, False)
+            if changed > 0:
                 _processed_cache.clear()
                 _sync_df_cache.clear()
                 invalidate_json_df_cache()
         return _raw_payload_cache
 
     if _raw_payload_cache is None:
-        for path in LOCAL_JSON_PATHS:
-            if path.exists():
-                with path.open("r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
-                    break
+        _raw_payload_cache = await run_in_threadpool(_load_local_json_sync)
 
-    # Luôn kiểm tra và gộp các ngày mới trên Firebase (ví dụ 29/10, 30/10) vào bộ đệm
     try:
-        await sync_soil_all_from_firebase()
+        await sync_soil_all_from_firebase(sync_public=False)
         if _raw_payload_cache is not None:
             return _raw_payload_cache
     except Exception as e:
@@ -218,7 +228,7 @@ def build_time_series_dataframe(payload: Dict[str, Any]) -> pd.DataFrame:
 
     # Resample theo từng đoạn liên tục (tránh tạo dòng giả qua khoảng trống dài giữa các đợt đo)
     segment_id = (df.index.to_series().diff() > pd.Timedelta(hours=24)).cumsum()
-    segments = [ seg.resample(FREQUENCY).mean() for _, seg in df.groupby(segment_id) if not seg.empty ]
+    segments = [seg.resample(FREQUENCY).mean() for _, seg in df.groupby(segment_id) if not seg.empty]
     df = pd.concat(segments) if segments else df.resample(FREQUENCY).mean()
 
     recorded_days = {k for k, v in data_node.items() if isinstance(v, dict) and v}
@@ -296,43 +306,27 @@ def _df_to_reading_dict(series_or_row: pd.Series) -> Dict[str, float]:
     }
 
 
-async def get_processed_sensor_bundle(
-    method: str = "ffill",
-    cap: Optional[str] = None,
-    smoothing: bool = False,
-    force_refresh: bool = False,
+def _compute_bundle_sync(
+    payload: Dict[str, Any],
+    method: str,
+    cap: Optional[str],
+    smoothing: bool,
 ) -> Dict[str, Any]:
-    """Trả về dữ liệu cảm biến đã xử lý làm sạch và tổng hợp theo từng giai đoạn sinh trưởng."""
-    payload = await fetch_raw_sensor_payload(force_refresh=force_refresh)
-    cache_key = f"{method}_{cap}_{smoothing}"
-    if cache_key in _processed_cache and not force_refresh:
-        return _processed_cache[cache_key]
-
+    """Hàm đồng bộ chạy trên threadpool để không khóa Event Loop."""
     df_raw = build_time_series_dataframe(payload)
 
     missing_per_col = df_raw.isna().sum().to_dict()
     total_missing_cells = int(df_raw.isna().sum().sum())
 
     df_clean = impute_and_clean_dataframe(df_raw, method=method, cap=cap, smoothing=smoothing)
+    del df_raw
 
-    df_export = df_clean.copy()
-    df_export["date_str"] = df_export.index.strftime("%Y-%m-%d")
-    df_export["time_str"] = df_export.index.strftime("%H:%M")
-
-    nested_data: Dict[str, Dict[str, Dict[str, float]]] = {}
-    for date_str, group in df_export.groupby("date_str", sort=True):
-        day_dict: Dict[str, Dict[str, float]] = {}
-        records = group.set_index("time_str")[FEATURE_COLUMNS].to_dict(orient="index")
-        for t_str, vals in records.items():
-            day_dict[t_str] = {k: round(float(v), 2) for k, v in vals.items()}
-        nested_data[date_str] = day_dict
-
-    sorted_dates = sorted(nested_data.keys())
+    sorted_dates = sorted(df_clean.index.strftime("%Y-%m-%d").unique())
     first_date = sorted_dates[0]
     last_date = sorted_dates[-1]
-    last_times = sorted(nested_data[last_date].keys())
-    latest_time = last_times[-1]
-    latest_reading = nested_data[last_date][latest_time]
+    latest_ts = df_clean.index[-1]
+    latest_time = latest_ts.strftime("%H:%M")
+    latest_reading = _df_to_reading_dict(df_clean.iloc[-1][FEATURE_COLUMNS])
 
     overall_avg = _df_to_reading_dict(df_clean[FEATURE_COLUMNS].mean())
 
@@ -399,12 +393,60 @@ async def get_processed_sensor_bundle(
             "latestReading": latest_reading,
         },
         "stage_averages": stage_averages,
-        "nested_data": nested_data,
         "df_clean": df_clean,
     }
-
-    _processed_cache[cache_key] = bundle
     return bundle
+
+
+def build_nested_data_from_df(
+    df_clean: pd.DataFrame,
+    days: Optional[int] = None,
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Chuyển DataFrame đã làm sạch sang cấu trúc nested dict data[ngày][giờ] theo yêu cầu."""
+    sub = df_clean
+    if days is not None and not sub.empty:
+        unique_days = sorted(sub.index.strftime("%Y-%m-%d").unique())[-days:]
+        if unique_days:
+            sub = sub.loc[sub.index >= pd.Timestamp(f"{unique_days[0]} 00:00:00")]
+    date_strs = sub.index.strftime("%Y-%m-%d")
+    time_strs = sub.index.strftime("%H:%M")
+    vals_arr = sub[FEATURE_COLUMNS].to_numpy(dtype="float64")
+    nested_data: Dict[str, Dict[str, Dict[str, float]]] = {}
+    col_names = FEATURE_COLUMNS
+    for d_str, t_str, row_vals in zip(date_strs, time_strs, vals_arr):
+        day_bucket = nested_data.get(d_str)
+        if day_bucket is None:
+            day_bucket = {}
+            nested_data[d_str] = day_bucket
+        day_bucket[t_str] = {k: float(v) for k, v in zip(col_names, row_vals)}
+    return nested_data
+
+
+async def get_processed_sensor_bundle(
+    method: str = "ffill",
+    cap: Optional[str] = None,
+    smoothing: bool = False,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
+    """Trả về dữ liệu cảm biến đã xử lý làm sạch và tổng hợp theo từng giai đoạn sinh trưởng."""
+    cache_key = f"{method}_{cap}_{smoothing}"
+    if cache_key in _processed_cache and not force_refresh:
+        now_ts = time.time()
+        if now_ts - _last_firebase_sync_ts <= _FIREBASE_CHECK_TTL_SEC:
+            return _processed_cache[cache_key]
+
+    async with _bundle_lock:
+        payload = await fetch_raw_sensor_payload(force_refresh=force_refresh)
+        if cache_key in _processed_cache and not force_refresh:
+            return _processed_cache[cache_key]
+
+        bundle = await run_in_threadpool(_compute_bundle_sync, payload, method, cap, smoothing)
+        # Giới hạn chỉ giữ tối đa 1 bộ đệm lớn trong RAM để tránh OOM trên Render (512MB)
+        _processed_cache.clear()
+        _sync_df_cache.clear()
+        _processed_cache[cache_key] = bundle
+        gc.collect()
+        return bundle
 
 
 _sync_df_cache: Dict[str, pd.DataFrame] = {}
@@ -415,19 +457,14 @@ def get_cleaned_sensor_dataframe_sync(method: str = "ffill") -> pd.DataFrame:
     global _raw_payload_cache, _last_firebase_sync_date
     today_vn = datetime.now(VN_TZ).strftime("%Y-%m-%d")
     cache_key = f"{method}_None_False"
-    if cache_key in _processed_cache and "df_clean" in _processed_cache[cache_key] and _last_firebase_sync_date == today_vn:
-        return _processed_cache[cache_key]["df_clean"].copy()
+    if cache_key in _processed_cache and "df_clean" in _processed_cache[cache_key]:
+        return _processed_cache[cache_key]["df_clean"]
     if method in _sync_df_cache and _last_firebase_sync_date == today_vn:
-        return _sync_df_cache[method].copy()
+        return _sync_df_cache[method]
 
     payload_data: Optional[Dict[str, Any]] = _raw_payload_cache
     if payload_data is None:
-        for path in LOCAL_JSON_PATHS:
-            if path.exists():
-                with path.open("r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    payload_data = loaded if "data" in loaded else {"data": loaded}
-                    break
+        payload_data = _load_local_json_sync()
     if payload_data is None:
         with httpx.Client(timeout=35.0) as client:
             res = client.get(f"{FIREBASE_DB_URL}/data.json")
@@ -435,14 +472,16 @@ def get_cleaned_sensor_dataframe_sync(method: str = "ffill") -> pd.DataFrame:
             fb = res.json() or {}
             payload_data = fb if "data" in fb else {"data": fb}
     else:
-        merge_latest_days_from_firebase_sync(payload_data)
+        merge_latest_days_from_firebase_sync(payload_data, sync_public=False)
 
     _raw_payload_cache = payload_data
     _last_firebase_sync_date = today_vn
     df_raw = build_time_series_dataframe(payload_data)
     df_clean = impute_and_clean_dataframe(df_raw, method=method)
+    del df_raw
+    _sync_df_cache.clear()
     _sync_df_cache[method] = df_clean
-    return df_clean.copy()
+    return df_clean
 
 
 STAGE_DEFINITIONS = [

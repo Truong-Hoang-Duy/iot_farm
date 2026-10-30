@@ -417,7 +417,7 @@ export const loadLocalSoilData = async (forceRefresh: boolean = false): Promise<
   return localLoadPromise;
 };
 
-async function fetchBackendJsonSafe(url: string, timeoutMs = 2500): Promise<any | null> {
+async function fetchBackendJsonSafe(url: string, timeoutMs = 10000): Promise<any | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -451,7 +451,7 @@ export const loadProcessedSensorDataFromBackend = async (
     try {
       const json = await fetchBackendJsonSafe(
         `${API_BASE}/api/sensors/data?method=${encodeURIComponent(method)}${forceRefresh ? '&refresh=true' : ''}`,
-        3000
+        12000
       );
       if (json && (json.data || typeof json === 'object')) {
         const candidate = (json.data || json) as FirebaseSensorData;
@@ -511,7 +511,7 @@ export const fetchProcessedStagesSummary = async (
 
   const json = await fetchBackendJsonSafe(
     `${API_BASE}/api/sensors/stages-summary?method=${encodeURIComponent(method)}${forceRefresh ? '&refresh=true' : ''}`,
-    2500
+    10000
   );
   if (json && json.summary && json.stage_averages) {
     cachedStagesSummary = json as BackendStagesSummaryResponse;

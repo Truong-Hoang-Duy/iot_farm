@@ -1,12 +1,11 @@
-"""Đồng bộ 2 chiều Firebase RTDB <-> InfluxDB 3.
+"""Đồng bộ 2 chiều Firebase RTDB <-> InfluxDB 3 (kèm đồng bộ bộ đệm Backend soil_all.json).
 
 * Firebase -> InfluxDB (fast loop, mỗi SYNC_INTERVAL_SEC): ngày hôm nay, hôm qua và các ngày được
   Jetson báo là vừa đẩy dữ liệu tồn đọng (logs/firebase_writes, from_backlog=true).
 * Audit (mỗi SYNC_AUDIT_INTERVAL_SEC): đối chiếu từng ngày (SYNC_AUDIT_DAYS gần nhất, 0 = tất cả):
     - key có trên Firebase nhưng thiếu trong Influx  -> ghi vào Influx
     - key có trong Influx nhưng thiếu trên Firebase -> backfill lên Firebase (BACKFILL_DAYS gần nhất)
-So khớp theo "giây trong ngày" nên key cũ "HH:MM" và key mới "HH:MM:SS" tương đương nhau.
-Mọi lần chạy được ghi log vào Influx (bảng sync_log) và Firebase (logs/sync/{YYYY-MM-DD}).
+* Khi InfluxDB phụ trợ (cổng 18181) chưa mở, tự động đồng bộ Firebase RTDB -> bộ đệm Backend (soil_all.json).
 """
 from __future__ import annotations
 
@@ -82,6 +81,7 @@ class SyncService:
         error: Optional[str] = None, detail: Optional[str] = None, trigger: str = "",
     ) -> Dict[str, Any]:
         entry = {
+            "ts": int(time.time() * 1000),
             "direction": direction,
             "status": status,
             "n_records": int(n),
@@ -211,9 +211,33 @@ class SyncService:
             pass
         return days
 
+    async def _sync_cache_fallback(self, t0: float, trigger: str) -> Dict[str, Any]:
+        """Đồng bộ Firebase RTDB -> bộ đệm Backend (soil_all.json) khi InfluxDB chưa bật."""
+        try:
+            from app.services.sensor_processing_service import sync_soil_all_from_firebase
+
+            res = await sync_soil_all_from_firebase()
+            changed_records = int(res.get("new_records", 0))
+            status = "ok" if (changed_records > 0 or trigger == "manual") else "noop"
+            return await self._log(
+                FB_TO_IX,
+                status,
+                changed_records,
+                t0,
+                res.get("first_date"),
+                res.get("last_date"),
+                detail=f"Đồng bộ bộ đệm Backend ({res.get('total_days', 0)} ngày)",
+                trigger=trigger,
+            )
+        except Exception as exc:
+            return await self._log(FB_TO_IX, "error", 0, t0, error=str(exc)[:300], trigger=trigger)
+
     # ------------------------------------------------------------ operations
     async def sync_days_fb_to_influx(self, days: List[str], trigger: str) -> Dict[str, Any]:
         t0 = time.time()
+        influx_ok = (await asyncio.to_thread(ix.health)).get("ok", False)
+        if not influx_ok:
+            return await self._sync_cache_fallback(t0, trigger)
         try:
             ix_sods = await self._influx_sods(days)
             total = 0
@@ -248,6 +272,21 @@ class SyncService:
         """Đối chiếu toàn bộ + backfill 2 chiều."""
         async with self.lock:
             t0 = time.time()
+            influx_ok = (await asyncio.to_thread(ix.health)).get("ok", False)
+            if not influx_ok:
+                r_in = await self._sync_cache_fallback(t0, trigger)
+                self.state["last_fast"] = r_in
+                self.state["last_audit"] = {
+                    "time": r_in["time"],
+                    "fb_to_influx": r_in,
+                    "influx_to_firebase": None,
+                }
+                self._save_state()
+                return {
+                    "fb_to_influx": r_in,
+                    "message": "Đã đồng bộ dữ liệu mới nhất từ Firebase về bộ đệm Backend.",
+                }
+
             try:
                 fb_days = set(await self.fb.shallow_keys("data"))
             except Exception as exc:
@@ -320,7 +359,7 @@ class SyncService:
             return
         self.running = True
         print(f"[Sync] Worker khởi động (fast={SYNC_INTERVAL_SEC}s, audit={SYNC_AUDIT_INTERVAL_SEC}s).")
-        await asyncio.sleep(5)
+        await asyncio.sleep(8)
         last_audit = 0.0
         try:
             while True:
@@ -366,4 +405,3 @@ def get_sync_service() -> SyncService:
     if _service is None:
         _service = SyncService()
     return _service
-

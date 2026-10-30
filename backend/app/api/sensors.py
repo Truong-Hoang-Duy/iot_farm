@@ -6,6 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.core.config import FARM_TZ, SENSOR_FIELDS
 from app.services.sensor_data_service import EVERY_MAP, get_sensor_df
 from app.services.sensor_processing_service import (
+    build_nested_data_from_df,
     get_processed_sensor_bundle,
     sync_soil_all_from_firebase,
 )
@@ -54,10 +55,7 @@ async def get_cleaned_sensor_data(
             smoothing=smoothing,
             force_refresh=refresh,
         )
-        nested = bundle["nested_data"]
-        if days is not None:
-            sorted_days = sorted(nested.keys())[-days:]
-            nested = {d: nested[d] for d in sorted_days}
+        nested = await run_in_threadpool(build_nested_data_from_df, bundle["df_clean"], days)
         return {
             "data": nested,
             "latest": bundle["latest"],

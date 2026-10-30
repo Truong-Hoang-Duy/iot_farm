@@ -24,9 +24,10 @@ except Exception as _e:
 from app.core.config import is_gemini_configured, GEMINI_MODEL
 from app.services.scheduler import auto_recommendation_worker
 from app.services.sensor_processing_service import get_processed_sensor_bundle
+from app.services.sync_service import get_sync_service
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+
+async def _warmup_sensor_cache() -> None:
     try:
         bundle = await get_processed_sensor_bundle(method="ffill")
         info = bundle["pipeline_info"]
@@ -34,18 +35,27 @@ async def lifespan(app: FastAPI):
             f"[Startup] Đã nạp và làm sạch {info['total_rows']:,} bản ghi cảm biến "
             f"({info['first_date']} -> {info['last_date']})."
         )
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         print(f"[Startup] Cảnh báo khi nạp dữ liệu cảm biến ban đầu: {e}")
 
-    # Khởi động worker phân tích định kỳ chạy ngầm
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Chạy ngầm việc nạp dữ liệu, đồng bộ 2 chiều và phân tích định kỳ để Uvicorn mở cổng tức thì (tránh 502 trên Render)
+    warmup_task = asyncio.create_task(_warmup_sensor_cache())
+    sync_task = asyncio.create_task(get_sync_service().worker())
     worker_task = asyncio.create_task(auto_recommendation_worker())
     yield
-    # Dừng worker khi ứng dụng tắt
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    # Dừng các worker khi ứng dụng tắt
+    for t in (warmup_task, sync_task, worker_task):
+        t.cancel()
+    for t in (warmup_task, sync_task, worker_task):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 app = FastAPI(
     title="IoT Farm Engine API",

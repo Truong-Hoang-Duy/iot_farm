@@ -74,6 +74,7 @@ async def auto_recommendation_worker():
     """Vòng lặp chạy ngầm kiểm tra và đồng bộ khuyến nghị với dữ liệu cây trồng thực tế."""
     global _last_auto_run_key, _last_midnight_sync_date
     print("[Scheduler] Worker phân tích tự động IoT Farm đã khởi động.")
+    await asyncio.sleep(5)
 
     try:
         context = await get_current_plant_context(method="ffill")

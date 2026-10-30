@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime
 from typing import Dict, Any, List
@@ -296,8 +297,10 @@ async def get_gemini_agronomy_advice(
     custom_notes: str | None = None
 ) -> AdvisorResponse:
     """Gọi Google Gemini để sinh đề xuất phân bón & chăm sóc cây ớt kết hợp dự báo XGBoost Direct và thời tiết ngoại sinh."""
-    forecast_data = get_xgboost_forecast_summary()
-    weather_context = get_weather_context_for_chili()
+    forecast_data, weather_context = await asyncio.gather(
+        asyncio.to_thread(get_xgboost_forecast_summary),
+        asyncio.to_thread(get_weather_context_for_chili),
+    )
 
     if not is_gemini_configured():
         return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, forecast_data)
@@ -311,14 +314,15 @@ async def get_gemini_agronomy_advice(
             plant_type, age_days, growth_stage, sensor, custom_notes, forecast_data, weather_context
         )
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model=GEMINI_MODEL,
             contents=user_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 temperature=0.3,
                 response_mime_type="application/json"
-            )
+            ),
         )
 
         clean_text = clean_json_string(response.text)
@@ -413,12 +417,13 @@ async def chat_with_gemini(
             f"Hãy trả lời ngắn gọn, thiết thực, khoa học và dễ hiểu bằng tiếng Việt."
         )
 
-        response = client.models.generate_content(
+        response = await asyncio.to_thread(
+            client.models.generate_content,
             model=GEMINI_MODEL,
             contents=full_prompt,
             config=types.GenerateContentConfig(
                 temperature=0.5
-            )
+            ),
         )
         return response.text.strip()
     except Exception as e:

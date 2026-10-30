@@ -380,7 +380,13 @@ function BackendStatusDisplay({
                 {status.running ? 'Đang thực hiện chu kỳ đồng bộ' : 'Đang chờ chu kỳ tiếp theo'}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {status.last_fast ? `Vừa chạy: ${String(status.last_fast)}` : 'Chưa ghi nhận lần chạy gần nhất'}
+                {status.last_fast
+                  ? `Vừa chạy: ${
+                      typeof status.last_fast === 'object' && status.last_fast !== null
+                        ? String((status.last_fast as Record<string, unknown>).time ?? '')
+                        : String(status.last_fast)
+                    }`
+                  : 'Chưa ghi nhận lần chạy gần nhất'}
               </p>
             </div>
           </div>
@@ -530,8 +536,50 @@ export default function LogsPage() {
     return { totalRecords, batches: writeLogs.length, errors: errors.length, lastOk, latest, backlog };
   }, [writeLogs]);
 
+  const mergedSyncLogs = useMemo(() => {
+    const map = new Map<string, SyncLog>();
+    for (const item of syncLogs) {
+      map.set(item.id, item);
+    }
+    const recent = Array.isArray(backendStatus?.recent) ? backendStatus.recent : [];
+    recent.forEach((raw, idx) => {
+      if (!raw || typeof raw !== 'object') return;
+      const r = raw as Record<string, unknown>;
+      const rawTs = (r.ts as number | string | undefined) ?? (r.time as string | undefined);
+      const ms = normalizeTs(rawTs);
+      if (ms !== null) {
+        const itemDateKey = localDateToDateKey(new Date(ms));
+        if (itemDateKey !== dateKey) return;
+      } else if (!isToday) {
+        return;
+      }
+      const id = String(r.id ?? `backend-${r.time ?? idx}-${r.direction ?? 'sync'}`);
+      const duplicate = Array.from(map.values()).some(
+        (existing) =>
+          existing.direction === r.direction &&
+          existing.n_records === r.n_records &&
+          Math.abs((normalizeTs(existing.ts) ?? 0) - (ms ?? 0)) < 3000,
+      );
+      if (!duplicate && !map.has(id)) {
+        map.set(id, {
+          id,
+          ts: rawTs,
+          direction: typeof r.direction === 'string' ? r.direction : undefined,
+          n_records: typeof r.n_records === 'number' ? r.n_records : 0,
+          range_start: (r.range_start as number | string | null | undefined) ?? null,
+          range_end: (r.range_end as number | string | null | undefined) ?? null,
+          duration_ms: typeof r.duration_ms === 'number' ? r.duration_ms : undefined,
+          status: typeof r.status === 'string' ? r.status : 'ok',
+          error: (r.error as string | null | undefined) ?? null,
+          detail: typeof r.detail === 'string' ? r.detail : undefined,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => (normalizeTs(b.ts) ?? 0) - (normalizeTs(a.ts) ?? 0));
+  }, [syncLogs, backendStatus, dateKey, isToday]);
+
   const syncStats = useMemo(() => {
-    const ok = syncLogs.filter((l) => l.status === 'ok');
+    const ok = mergedSyncLogs.filter((l) => l.status === 'ok');
     const sumDir = (dir: string) =>
       ok.filter((l) => l.direction === dir).reduce((s, l) => s + (typeof l.n_records === 'number' ? l.n_records : 0), 0);
     const lastOk = ok.reduce<number | null>((max, l) => {
@@ -541,11 +589,11 @@ export default function LogsPage() {
     return {
       toInflux: sumDir('firebase_to_influx'),
       toFirebase: sumDir('influx_to_firebase'),
-      errors: syncLogs.filter((l) => l.status === 'error').length,
-      runs: syncLogs.length,
+      errors: mergedSyncLogs.filter((l) => l.status === 'error').length,
+      runs: mergedSyncLogs.length,
       lastOk,
     };
-  }, [syncLogs]);
+  }, [mergedSyncLogs]);
 
   const hourCounts = useMemo(() => {
     const counts: Record<number, number> = {};
@@ -600,12 +648,12 @@ export default function LogsPage() {
   }, [safePage, totalPages]);
   const filteredSync = useMemo(
     () =>
-      syncLogs.filter(
+      mergedSyncLogs.filter(
         (l) =>
           (syncFilter === 'all' || l.status === syncFilter) &&
           (directionFilter === 'all' || l.direction === directionFilter),
       ),
-    [syncLogs, syncFilter, directionFilter],
+    [mergedSyncLogs, syncFilter, directionFilter],
   );
 
   const dayLabel = isToday ? 'hôm nay' : `ngày ${formatDateKeyVi(dateKey)}`;
@@ -834,7 +882,7 @@ export default function LogsPage() {
                         <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Thời lượng</TableHead>
                         <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Hàng đợi</TableHead>
                         <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Nguồn</TableHead>
-                        <TableHead className="font-semibold text-foreground py-3">Chi tiết / Thông báo lỗi</TableHead>
+                        <TableHead className="font-semibold text-foreground py-3">Chi tiết / thông báo lỗi</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1084,7 +1132,7 @@ export default function LogsPage() {
                       <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Số bản ghi</TableHead>
                       <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Khoảng dữ liệu</TableHead>
                       <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Thời lượng</TableHead>
-                      <TableHead className="font-semibold text-foreground py-3">Chi tiết / Thông báo lỗi</TableHead>
+                      <TableHead className="font-semibold text-foreground py-3">Chi tiết / thông báo lỗi</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1109,6 +1157,10 @@ export default function LogsPage() {
                           {log.error ? (
                             <span className="text-destructive font-medium break-words">
                               {formatViError(log.error)}
+                            </span>
+                          ) : typeof log.detail === 'string' && log.detail ? (
+                            <span className="text-muted-foreground break-words">
+                              {log.detail}
                             </span>
                           ) : (
                             <span className="text-muted-foreground/60">—</span>
