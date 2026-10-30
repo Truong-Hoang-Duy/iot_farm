@@ -328,10 +328,36 @@ async def get_processed_sensor_bundle(
         },
         "stage_averages": stage_averages,
         "nested_data": nested_data,
+        "df_clean": df_clean,
     }
 
     _processed_cache[cache_key] = bundle
     return bundle
+
+
+def get_cleaned_sensor_dataframe_sync(method: str = "ffill") -> pd.DataFrame:
+    """Trả về DataFrame cảm biến đã qua bước tiền xử lý và làm sạch (phục vụ đồng bộ cho /api/sensors/history và tương quan)."""
+    cache_key = f"{method}_None_False"
+    if cache_key in _processed_cache and "df_clean" in _processed_cache[cache_key]:
+        return _processed_cache[cache_key]["df_clean"].copy()
+
+    payload_data: Optional[Dict[str, Any]] = _raw_payload_cache
+    if payload_data is None:
+        for path in LOCAL_JSON_PATHS:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    payload_data = loaded if "data" in loaded else {"data": loaded}
+                    break
+    if payload_data is None:
+        with httpx.Client(timeout=35.0) as client:
+            res = client.get(f"{FIREBASE_DB_URL}/data.json")
+            res.raise_for_status()
+            fb = res.json() or {}
+            payload_data = fb if "data" in fb else {"data": fb}
+
+    df_raw = build_time_series_dataframe(payload_data)
+    return impute_and_clean_dataframe(df_raw, method=method)
 
 
 STAGE_DEFINITIONS = [

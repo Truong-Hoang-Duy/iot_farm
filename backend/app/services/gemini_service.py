@@ -198,6 +198,47 @@ def generate_rule_based_fallback(
     )
 
 
+def get_weather_context_for_chili() -> Dict[str, Any] | None:
+    """Lấy dự báo khí tượng ngoại sinh 24h tới để bổ sung khuyến nghị tưới & bón phân chủ động cho cây ớt."""
+    try:
+        from app.services.weather_service import current_weather
+        w = current_weather()
+        n24 = w.get("next24h") or {}
+        rain24 = float(n24.get("precip_total_mm") or 0.0)
+        et024 = float(n24.get("et0_total_mm") or 0.0)
+        wb24 = round(rain24 - et024, 2)
+        tmax = n24.get("temp_max")
+        rh_mean = n24.get("rh_mean")
+
+        notes: List[str] = []
+        if rain24 >= 10.0:
+            notes.append(
+                f"Dự báo mưa lớn ({rain24:.1f} mm/24h): Tạm hoãn tưới và không bón phân gốc để tránh rửa trôi Đạm, Kali và tránh ngập úng bộ rễ chùm 0-30cm của cây ớt."
+            )
+        elif wb24 < -3.0:
+            notes.append(
+                f"Cân bằng nước âm mạnh ({wb24:.1f} mm/24h, bốc thoát hơi cao): Cần tưới bù ẩm đón đầu để giữ ẩm độ đất 60-75%, tránh khô héo cuống hoa ở nách chảng ba."
+            )
+        if tmax is not None and float(tmax) >= 34.0:
+            notes.append(
+                f"Nắng nóng đỉnh điểm {float(tmax):.1f}°C (sóng nhiệt sẽ truyền xuống tầng rễ ớt sau 5-6 giờ): Tưới mát vào sáng sớm trước 08:00."
+            )
+        if rh_mean is not None and float(rh_mean) >= 85.0:
+            notes.append(
+                f"Độ ẩm không khí trung bình cao ({float(rh_mean):.0f}%): Nguy cơ bùng phát nấm thán thư quả ớt và héo rũ."
+            )
+        return {
+            "rain_24h_mm": round(rain24, 1),
+            "et0_24h_mm": round(et024, 2),
+            "water_balance_24h_mm": wb24,
+            "temp_max_24h": tmax,
+            "rh_mean_24h": rh_mean,
+            "agro_note": " ".join(notes) if notes else "Thời tiết 24h tới thuận lợi cho sinh trưởng của cây ớt.",
+        }
+    except Exception:
+        return None
+
+
 def get_xgboost_forecast_summary() -> Dict[str, Any] | None:
     """Trích xuất kết quả dự báo 2 giờ tới từ mô hình XGBoost Direct tốt nhất (Safe Fallback nếu lỗi)."""
     try:
@@ -254,8 +295,9 @@ async def get_gemini_agronomy_advice(
     sensor: Dict[str, Any],
     custom_notes: str | None = None
 ) -> AdvisorResponse:
-    """Gọi Google Gemini để sinh đề xuất phân bón & chăm sóc kết hợp dự báo XGBoost Direct."""
+    """Gọi Google Gemini để sinh đề xuất phân bón & chăm sóc cây ớt kết hợp dự báo XGBoost Direct và thời tiết ngoại sinh."""
     forecast_data = get_xgboost_forecast_summary()
+    weather_context = get_weather_context_for_chili()
 
     if not is_gemini_configured():
         return generate_rule_based_fallback(plant_type, age_days, growth_stage, sensor, forecast_data)
@@ -266,7 +308,7 @@ async def get_gemini_agronomy_advice(
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         user_prompt = build_agronomy_prompt(
-            plant_type, age_days, growth_stage, sensor, custom_notes, forecast_data
+            plant_type, age_days, growth_stage, sensor, custom_notes, forecast_data, weather_context
         )
 
         response = client.models.generate_content(

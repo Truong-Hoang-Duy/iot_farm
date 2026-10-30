@@ -6,7 +6,7 @@
  * Thời gian (`t`) là chuỗi ISO có offset +07:00; mỗi điểm được bổ sung `ts` (epoch ms).
  */
 
-import { loadLocalSoilData } from './firebaseAPI';
+import { loadProcessedSensorDataFromBackend } from './firebaseAPI';
 
 // ============================================================================
 // Hằng số dùng chung
@@ -1309,7 +1309,7 @@ function computeNext24hSummary(hourly: WeatherHourly[], nowMs: number): WeatherN
 }
 
 async function fallbackSensorHistory(p: { start: string; end: string; every?: string; fields?: string[] }): Promise<HistoryResponse> {
-  const soil = await loadLocalSoilData();
+  const soil = await loadProcessedSensorDataFromBackend('ffill');
   if (!soil) return { every: p.every ?? '1h', fields: p.fields, points: [] };
   const startMs = toMs(p.start) ?? 0;
   const endMs = toMs(p.end) ?? Date.now();
@@ -1381,7 +1381,7 @@ async function fallbackWeatherCorrelation(p: {
   method: 'pearson' | 'spearman';
   max_lag_h?: number;
 }): Promise<CorrelationResponse> {
-  const soil = await loadLocalSoilData();
+  const soil = await loadProcessedSensorDataFromBackend('ffill');
   if (!soil) throw new BackendError('No sensor data', 404, 'not_found', 'Chưa có dữ liệu cảm biến');
   const dates = Object.keys(soil).sort();
   const lastDateStr = dates[dates.length - 1];
@@ -1662,7 +1662,7 @@ export const backendAPI = {
     return fallbackWeatherCorrelation(p);
   },
 
-  // ---- Sensor history ----
+  // ---- Sensor history (qua /api/sensors/history trong backend/app/api/sensors.py) ----
   /** start/end: ISO 8601 (vd 2026-10-01T00:00:00+07:00); every: '5m' | '1h' | ...; fields: danh sách field */
   async getHistory(
     p: { start: string; end: string; every?: string; fields?: string[] },
@@ -1671,7 +1671,7 @@ export const backendAPI = {
     try {
       return parseHistory(
         await get(
-          '/history',
+          '/sensors/history',
           { start: p.start, end: p.end, every: p.every ?? '5m', fields: p.fields?.length ? p.fields.join(',') : undefined },
           signal,
         ),

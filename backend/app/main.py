@@ -8,6 +8,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.api.recommendations import router as recommendations_router
 from app.api.sensors import router as sensors_router
 from app.api.alerts import router as alerts_router
@@ -55,7 +56,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Cấu hình CORS để Frontend React gọi thoải mái
+# Cấu hình CORS và nén GZip để truyền dữ liệu cảm biến đã xử lý từ /api/sensors/* nhanh chóng
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -62,24 +62,17 @@ def load_json_df() -> pd.DataFrame:
     with _json_lock:
         if _json_df is not None:
             return _json_df
-        raw = _read_raw_soil_json()
-        data = raw.get("data", raw)
-        rows = []
-        for d, times in data.items():
-            if not isinstance(times, dict):
-                continue
-            for t, rec in times.items():
-                ts = ix.key_to_epoch(d, t)
-                if ts is None or not isinstance(rec, dict):
-                    continue
-                row = {"ts": ts}
-                for f in SENSOR_FIELDS:
-                    v = rec.get(f)
-                    row[f] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else float("nan")
-                rows.append(row)
-        df = pd.DataFrame(rows)
-        df["time"] = pd.to_datetime(df.pop("ts"), unit="s", utc=True).dt.tz_convert(FARM_TZ)
-        _json_df = df.set_index("time").sort_index()
+        from app.services.sensor_processing_service import get_cleaned_sensor_dataframe_sync
+        df_clean = get_cleaned_sensor_dataframe_sync(method="ffill")
+        idx = pd.to_datetime(df_clean.index)
+        if idx.tz is None:
+            idx = idx.tz_localize(FARM_TZ)
+        else:
+            idx = idx.tz_convert(FARM_TZ)
+        df_clean = df_clean.copy()
+        df_clean.index = idx
+        df_clean.index.name = "time"
+        _json_df = df_clean.sort_index()
         return _json_df
 
 

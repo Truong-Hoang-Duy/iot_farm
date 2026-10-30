@@ -52,14 +52,15 @@ def build_agronomy_prompt(
     growth_stage: str,
     sensor: Dict[str, Any],
     custom_notes: str | None = None,
-    forecast_data: Dict[str, Any] | None = None
+    forecast_data: Dict[str, Any] | None = None,
+    weather_context: Dict[str, Any] | None = None,
 ) -> str:
     prompt = f"""
 Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
 - Cây trồng: {plant_type}
 - Tuổi cây: {age_days} ngày tuổi
 - Giai đoạn sinh trưởng: {growth_stage}
-- Các chỉ số đo đạc từ trạm cảm biến IoT:
+- Các chỉ số đo đạc từ trạm cảm biến IoT (đã qua làm sạch tại Backend):
   + Độ ẩm thể tích đất: {sensor.get('moisture', 'N/A')}%
   + Nhiệt độ tầng đất: {sensor.get('soiltemp', 'N/A')}°C
   + Độ pH đất: {sensor.get('pH', 'N/A')}
@@ -76,8 +77,16 @@ Hãy phân tích dữ liệu quan trắc vườn ớt hiện tại:
   + Nhiệt độ đất dự kiến 2 giờ tới: {forecast_data.get('soiltemp_yhat', 'N/A')}°C
   + Nhận định vi khí hậu: {forecast_data.get('risk_note', 'Bình thường')}
 """
+    if weather_context:
+        prompt += f"""- Dữ liệu khí tượng ngoại sinh tại tọa độ vườn ớt (dự báo 24h - 72h tới):
+  + Tổng lượng mưa dự báo 24 giờ tới: {weather_context.get('rain_24h_mm', 0.0)} mm
+  + Tổng bốc thoát hơi nước tham chiếu 24 giờ tới: {weather_context.get('et0_24h_mm', 0.0)} mm
+  + Cân bằng nước khí tượng 24 giờ tới: {weather_context.get('water_balance_24h_mm', 0.0)} mm
+  + Nhiệt độ không khí cao nhất 24 giờ tới: {weather_context.get('temp_max_24h', 'N/A')}°C (độ trễ truyền nhiệt xuống rễ ớt khoảng 6 giờ)
+  + Nhận định khí tượng nông nghiệp cho cây ớt: {weather_context.get('agro_note', 'Ổn định')}
+"""
     if custom_notes:
         prompt += f"- Ghi chú của nông dân: {custom_notes}\n"
 
-    prompt += "\nHãy tính toán điểm sức khỏe đất và đưa ra phác đồ theo đúng cấu trúc JSON quy định."
+    prompt += "\nHãy tính toán điểm sức khỏe đất và đưa ra phác đồ chăm sóc cây ớt theo đúng cấu trúc JSON quy định."
     return prompt

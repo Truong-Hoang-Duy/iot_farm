@@ -6,7 +6,6 @@ import SensorChart from '@/components/dashboard/SensorChart';
 import {
   subscribeSensorData,
   fetchProcessedStagesSummary,
-  fetchLatestFirebaseReadingFast,
   FirebaseSensorReading,
   FirebaseSensorData,
   BackendStagesSummaryResponse,
@@ -44,24 +43,7 @@ export default function Dashboard() {
   const targets = currentStage.targets;
 
   useEffect(() => {
-    // 1. Lấy nhanh mẫu đo mới nhất trực tiếp từ Firebase (~150ms) để mở khóa giao diện tức thời
-    fetchLatestFirebaseReadingFast()
-      .then((fast) => {
-        if (fast) {
-          setLatestReading((prev) => prev ?? fast.reading);
-          const [year, month, day] = fast.date.split('-');
-          const [hour, minute] = fast.time.split(':');
-          if (year && month && day && hour && minute) {
-            setLastUpdate(
-              new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
-            );
-          }
-          setIsLoading(false);
-        }
-      })
-      .catch(() => {});
-
-    // 2. Lấy bản tóm tắt chuẩn hóa từ Backend
+    // 1. Lấy bản tóm tắt chuẩn hóa & mẫu đo mới nhất đã qua xử lý từ Backend (/api/sensors/stages-summary)
     fetchProcessedStagesSummary('ffill')
       .then((res) => {
         if (res) {
