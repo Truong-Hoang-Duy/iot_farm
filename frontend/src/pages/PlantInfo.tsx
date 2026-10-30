@@ -22,6 +22,7 @@ import {
   StageFirebaseAnalysis,
   FullDatasetSummary,
 } from '@/data/plantGrowthData';
+import { PlantInfoSkeleton } from '@/components/common/LoadingStates';
 
 export default function PlantInfoPage() {
   const navigate = useNavigate();
@@ -125,11 +126,7 @@ export default function PlantInfoPage() {
   const selectedStageAnalysis = stageAnalyses[activeStageIndex] || currentStageAnalysis;
 
   if (isLoading || !streamingConfig) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <PlantInfoSkeleton />;
   }
 
   return (
@@ -383,7 +380,7 @@ export default function PlantInfoPage() {
 
             <div className="rounded-xl border border-border overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="w-full text-xs min-w-[560px]">
                   <thead>
                     <tr className="bg-secondary/50 border-b border-border text-muted-foreground">
                       <th className="text-left py-2.5 px-3 font-semibold">Chỉ số môi trường</th>
@@ -447,11 +444,11 @@ export default function PlantInfoPage() {
       </div>
 
       {/* KHỐI 3: BẢNG TỔNG HỢP TOÀN CHU KỲ */}
-      <div className="rounded-2xl border border-border bg-card p-6 overflow-x-auto shadow-xs">
-        <h3 className="font-display text-lg font-semibold mb-4">
+      <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 overflow-x-auto shadow-xs">
+        <h3 className="font-display text-base sm:text-lg font-semibold mb-4">
           Bảng tổng hợp chỉ số qua 6 giai đoạn phát triển
         </h3>
-        <table className="w-full text-xs sm:text-sm">
+        <table className="w-full text-xs sm:text-sm min-w-[780px]">
           <thead>
             <tr className="border-b border-border bg-secondary/40 text-muted-foreground">
               <th className="text-left py-3 px-3 font-semibold whitespace-nowrap w-px">

@@ -13,6 +13,7 @@ import {
 import { getPlantData, getCurrentStageIndex } from '@/data/plantGrowthData';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTimeVN } from '@/lib/utils';
+import { DashboardSkeleton } from '@/components/common/LoadingStates';
 
 export default function Dashboard() {
   const [latestReading, setLatestReading] = useState<FirebaseSensorReading | null>(null);
@@ -101,11 +102,7 @@ export default function Dashboard() {
   }, [toast]);
 
   if (isLoading || !latestReading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   const getNPKStatus = (value: number, low: number, high: number) => {
@@ -119,21 +116,21 @@ export default function Dashboard() {
   const kStatus = getNPKStatus(latestReading.K ?? 0, targets.K.min, targets.K.max);
 
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-6 sm:space-y-8 animate-fade-in w-full max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="font-display text-3xl font-bold">Tổng quan hệ thống</h1>
+            <h1 className="font-display text-2xl sm:text-3xl font-bold">Tổng quan hệ thống</h1>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
               Cây ớt • Ngày thứ {actualDaysPlanted} • Giai đoạn {currentStage.stageNumber}: {currentStage.name}
             </span>
           </div>
-          <p className="text-muted-foreground mt-1">
+          <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
             Theo dõi thông số môi trường và so sánh với mức chuẩn giai đoạn {currentStage.stageNumber}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
           <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
           Cập nhật: {formatDateTimeVN(lastUpdate)}
         </div>
@@ -143,7 +140,7 @@ export default function Dashboard() {
       <DeviceStatusCard />
 
       {/* Main Sensors */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <SensorCard
           title="Nhiệt độ đất"
           value={Number((latestReading.soiltemp ?? 0).toFixed(1))}
@@ -183,7 +180,7 @@ export default function Dashboard() {
       </div>
 
       {/* Environment Sensors */}
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
         <SensorCard
           title="Nhiệt độ không khí"
           value={Number((latestReading.temperature ?? 0).toFixed(1))}
@@ -205,13 +202,13 @@ export default function Dashboard() {
       </div>
 
       {/* NPK Section */}
-      <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
+      <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 shadow-xs">
         <h2 className="font-display text-lg sm:text-xl font-semibold mb-4 flex items-center gap-2">
           <Atom className="h-5 w-5 text-nutrient" />
           Dinh dưỡng NPK (chuẩn giai đoạn {currentStage.stageNumber}: {currentStage.name})
         </h2>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
           {/* Nitrogen */}
           <div className={`rounded-xl border p-4 ${nStatus.bg} border-blue-500/20`}>
             <div className="flex items-center justify-between mb-3">

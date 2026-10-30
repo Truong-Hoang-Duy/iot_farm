@@ -3,32 +3,31 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Leaf, 
-  AlertTriangle, 
+  ClipboardCheck, 
   Settings, 
   Power, 
-  BookOpen,
   CloudSun,
   LineChart,
   ScrollText,
   Menu,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  PanelLeftOpen
 } from 'lucide-react';
 import { cn, formatDateTimeVN } from '@/lib/utils';
 import { DeviceOnlineIndicator } from '@/components/layout/DeviceOnlineIndicator';
 
-// Cờ hiển thị tab "Dự báo & Model" (tạm ẩn theo yêu cầu, khi cần bật lại chỉ cần đổi thành true)
+// Cờ hiển thị tab "Dự báo & mô hình" (tạm ẩn theo yêu cầu, khi cần bật lại chỉ cần đổi thành true)
 const SHOW_MODEL_LAB_TAB = false;
 
 const navigation = [
   { name: 'Tổng quan', href: '/', icon: LayoutDashboard },
   { name: 'Thông tin cây trồng', href: '/plant', icon: Leaf },
   { name: 'Thời tiết', href: '/weather', icon: CloudSun },
-  { name: 'Cảnh báo', href: '/alerts', icon: AlertTriangle },
+  { name: 'Khuyến nghị', href: '/alerts', icon: ClipboardCheck },
   { name: 'Điều khiển', href: '/controls', icon: Power },
-  ...(SHOW_MODEL_LAB_TAB ? [{ name: 'Dự báo & Model', href: '/model-lab', icon: LineChart }] : []),
-  { name: 'Khuyến nghị', href: '/recommendations', icon: BookOpen },
+  ...(SHOW_MODEL_LAB_TAB ? [{ name: 'Dự báo & mô hình', href: '/model-lab', icon: LineChart }] : []),
   { name: 'Nhật ký thiết bị', href: '/logs', icon: ScrollText },
   { name: 'Cài đặt', href: '/settings', icon: Settings },
 ];

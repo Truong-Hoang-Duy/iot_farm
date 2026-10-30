@@ -1,4 +1,4 @@
-import { CloudRain, Droplets, Flame, Lightbulb, Link2, ShieldAlert, Sun } from 'lucide-react';
+import { CloudRain, Droplets, Flame, Lightbulb, Link2, ShieldAlert, Sun, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { targetLabel, weatherVarLabel, type CorrelationResponse, type WeatherHourly, type WeatherNext24h } from '@/services/backendAPI';
 import { fmtNum } from '@/components/forecast/chartUtils';
@@ -170,7 +170,10 @@ export function InsightsList({ insights, className }: { insights: Insight[]; cla
         Nhận định tự động
       </h2>
       {insights.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Đang tổng hợp nhận định canh tác từ dự báo thời tiết 24–48 giờ tới.</p>
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-secondary/30 text-xs text-muted-foreground animate-pulse">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span>Đang tổng hợp nhận định canh tác từ dự báo thời tiết 24–48 giờ tới...</span>
+        </div>
       ) : (
         <ul className="grid gap-2 md:grid-cols-2">
           {insights.map((ins, i) => (

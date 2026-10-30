@@ -52,6 +52,7 @@ import {
   parseTimeKey,
   todayDateKey,
 } from '@/lib/timeKeys';
+import { TableSkeleton } from '@/components/common/LoadingStates';
 
 type StatusFilter = 'all' | 'ok' | 'error' | 'noop';
 
@@ -1194,9 +1195,12 @@ function LogTableShell({
 }) {
   if (loading) {
     return (
-      <div className="h-40 flex items-center justify-center text-muted-foreground gap-2 text-sm">
-        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-        <span>Đang nạp dữ liệu nhật ký...</span>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse pb-1">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          <span>Đang đồng bộ dữ liệu nhật ký thời gian thực...</span>
+        </div>
+        <TableSkeleton columns={7} rows={6} />
       </div>
     );
   }

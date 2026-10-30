@@ -9,7 +9,6 @@ import Dashboard from "./pages/Dashboard";
 import PlantInfo from "./pages/PlantInfo";
 import Alerts from "./pages/Alerts";
 import Controls from "./pages/Controls";
-import Recommendations from "./pages/Recommendations";
 import Settings from "./pages/Settings";
 import Weather from "./pages/Weather";
 import Logs from "./pages/Logs";
@@ -25,7 +24,7 @@ function AppRoutes() {
       <Route path="/plant" element={<Layout><PlantInfo /></Layout>} />
       <Route path="/alerts" element={<Layout><Alerts /></Layout>} />
       <Route path="/controls" element={<Layout><Controls /></Layout>} />
-      <Route path="/recommendations" element={<Layout><Recommendations /></Layout>} />
+      <Route path="/recommendations" element={<Navigate to="/alerts" replace />} />
       <Route path="/weather" element={<Layout><Weather /></Layout>} />
       <Route path="/model-lab" element={<Layout><ModelLab /></Layout>} />
       <Route path="/logs" element={<Layout><Logs /></Layout>} />

@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import { FirebaseSensorData } from '@/services/firebaseAPI';
 import * as XLSX from 'xlsx';
+import { ChartSkeleton } from '@/components/forecast/StateViews';
 
 interface SensorChartProps {
   sensorData?: FirebaseSensorData | null;
@@ -489,7 +490,9 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
 
       {/* Chart */}
       <div className="h-64 sm:h-80">
-        {chartData.length === 0 ? (
+        {!sensorData ? (
+          <ChartSkeleton className="h-full" />
+        ) : chartData.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
             <CalendarDays className="h-8 w-8 opacity-50" />
             <span>

@@ -11,7 +11,7 @@ import {
   Trash2,
   Clock,
   ShieldCheck,
-  Sparkles,
+  Sprout,
   X,
   AlertOctagon,
   RefreshCw,
@@ -35,7 +35,6 @@ import {
   AIAlertsBundleResponse,
 } from '@/services/aiAPI';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,6 +46,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { UserForecastSection } from '@/components/forecast/UserForecastSection';
 
 const OVERRIDES_STORAGE_KEY = 'iot_farm_alerts_overrides';
 
@@ -156,7 +156,6 @@ export default function AlertsPage() {
 
     const unsubscribe = subscribeAlerts((data) => {
       if (!isMounted) return;
-      // Chỉ giữ các cảnh báo thuộc ngày hiện tại (không hiển thị cảnh báo tồn đọng của ngày cũ)
       const todayAlerts = (data || []).filter((a) => a.time && a.time.startsWith(todayStr));
       setRawAlerts(todayAlerts);
       setIsLoading(false);
@@ -192,18 +191,18 @@ export default function AlertsPage() {
       if (bundle.status === 'no_data_today') {
         toast({
           title: 'Chưa có dữ liệu đo hôm nay',
-          description: 'Hệ thống chưa ghi nhận số liệu đo mới của ngày hôm nay trên Firebase.',
+          description: 'Hệ thống chưa ghi nhận số liệu đo mới của ngày hôm nay.',
         });
       } else {
         toast({
-          title: 'Đã phân tích cảnh báo',
+          title: 'Đã cập nhật phân tích',
           description: `Phát hiện ${bundle.alerts.length} cảnh báo từ mẫu đo ${bundle.sensor_timestamp}.`,
         });
       }
     } catch (e: any) {
       toast({
         title: 'Lỗi phân tích cảnh báo',
-        description: e?.message || 'Không thể kết nối Backend AI.',
+        description: e?.message || 'Không thể kết nối máy chủ phân tích.',
         variant: 'destructive',
       });
     } finally {
@@ -247,17 +246,14 @@ export default function AlertsPage() {
 
   const handleConfirm = async (alert: FirebaseAlertData) => {
     const timeStr = formatDateTimeVN(new Date());
-
     updateLocalOverride(alert.id, {
       acknowledged: true,
       acknowledgedAt: timeStr,
     });
-
     await acknowledgeAlert(alert.id);
-
     toast({
       title: 'Đã xử lý cảnh báo',
-      description: `Đã đánh dấu xử lý cảnh báo: ${alert.id}`,
+      description: `Đã đánh dấu xử lý: ${alert.id}`,
     });
   };
 
@@ -266,33 +262,26 @@ export default function AlertsPage() {
       acknowledged: false,
       acknowledgedAt: '',
     });
-
     await unacknowledgeAlert(alert.id);
-
     toast({
       title: 'Đã chuyển về chờ xử lý',
-      description: `Đã chuyển cảnh báo ${alert.id} về trạng thái chờ xử lý.`,
+      description: `Cảnh báo ${alert.id} đã chuyển về trạng thái chờ xử lý.`,
     });
   };
 
   const handleDismissConfirm = async () => {
     if (!dismissTarget) return;
-
     const timeStr = formatDateTimeVN(new Date());
-
     updateLocalOverride(dismissTarget.id, {
       active: false,
       dismissed: true,
       dismissedAt: timeStr,
     });
-
     await dismissAlert(dismissTarget.id);
-
     toast({
       title: 'Đã hủy bỏ cảnh báo',
-      description: `Cảnh báo ${dismissTarget.id} đã được chuyển vào mục Đã hủy bỏ.`,
+      description: `Cảnh báo ${dismissTarget.id} đã chuyển vào mục đã hủy bỏ.`,
     });
-
     setDismissTarget(null);
   };
 
@@ -301,38 +290,31 @@ export default function AlertsPage() {
       active: true,
       dismissed: false,
     });
-
     await reactivateAlert(alert.id);
-
     toast({
       title: 'Đã kích hoạt lại',
-      description: `Cảnh báo ${alert.id} đã quay trở lại danh sách hoạt động.`,
+      description: `Cảnh báo ${alert.id} đã quay lại danh sách hoạt động.`,
     });
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
-
     await deleteAlert(deleteTarget.id);
-
     setOverrides((prev) => {
       const next = { ...prev };
       delete next[deleteTarget.id];
       saveOverrides(next);
       return next;
     });
-
     toast({
       title: 'Đã xóa cảnh báo',
       description: `Cảnh báo ${deleteTarget.id} đã được xóa vĩnh viễn.`,
     });
-
     setDeleteTarget(null);
   };
 
   const handleConfirmAll = async () => {
     const timeStr = formatDateTimeVN(new Date());
-
     const newOverrides = { ...overrides };
     for (const a of unconfirmedAlerts) {
       newOverrides[a.id] = {
@@ -342,20 +324,17 @@ export default function AlertsPage() {
       };
       acknowledgeAlert(a.id);
     }
-
     setOverrides(newOverrides);
     saveOverrides(newOverrides);
     setConfirmAllOpen(false);
-
     toast({
       title: 'Đã xử lý tất cả',
-      description: `Đã đánh dấu đã xử lý cho toàn bộ ${unconfirmedAlerts.length} cảnh báo.`,
+      description: `Đã đánh dấu xử lý cho ${unconfirmedAlerts.length} cảnh báo.`,
     });
   };
 
   const handleDismissAll = async () => {
     const timeStr = formatDateTimeVN(new Date());
-
     const newOverrides = { ...overrides };
     for (const a of activeAlerts) {
       newOverrides[a.id] = {
@@ -366,11 +345,9 @@ export default function AlertsPage() {
       };
       dismissAlert(a.id);
     }
-
     setOverrides(newOverrides);
     saveOverrides(newOverrides);
     setDismissAllOpen(false);
-
     toast({
       title: 'Đã hủy bỏ tất cả',
       description: `Đã hủy bỏ toàn bộ ${activeAlerts.length} cảnh báo đang hoạt động.`,
@@ -413,404 +390,355 @@ export default function AlertsPage() {
     });
   }, [activeTab, activeAlerts, unconfirmedAlerts, confirmedAlerts, dismissedAlerts]);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
+  const filterItems = [
+    {
+      key: 'active' as const,
+      label: 'Đang hoạt động',
+      count: activeAlerts.length,
+      icon: AlertTriangle,
+      activeClass: 'border-primary bg-primary/[0.06] text-primary',
+      iconClass: 'text-warning',
+    },
+    {
+      key: 'unconfirmed' as const,
+      label: 'Chờ xử lý',
+      count: unconfirmedAlerts.length,
+      icon: Clock,
+      activeClass: 'border-amber-500 bg-amber-500/[0.06] text-amber-600',
+      iconClass: 'text-amber-500',
+    },
+    {
+      key: 'confirmed' as const,
+      label: 'Đã xử lý',
+      count: confirmedAlerts.length,
+      icon: ShieldCheck,
+      activeClass: 'border-emerald-500 bg-emerald-500/[0.06] text-emerald-600',
+      iconClass: 'text-emerald-500',
+    },
+    {
+      key: 'dismissed' as const,
+      label: 'Đã hủy bỏ',
+      count: dismissedAlerts.length,
+      icon: BellOff,
+      activeClass: 'border-muted-foreground bg-muted/40 text-foreground',
+      iconClass: 'text-muted-foreground',
+    },
+  ];
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="font-display text-3xl font-bold">Cảnh báo hệ thống</h1>
-          </div>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Phân tích tự động dữ liệu đo của ngày hôm nay ({aiBundle?.sensor_timestamp || new Date().toISOString().slice(0, 10)})
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            size="sm"
-            disabled={isAnalyzing}
-            onClick={handleAnalyzeWithGemini}
-            className="gap-1.5"
-          >
-            <RefreshCw className={cn('h-4 w-4', isAnalyzing && 'animate-spin')} />
-            {isAnalyzing ? 'Đang phân tích...' : 'Phân tích'}
-          </Button>
-        </div>
+      {/* Tiêu đề trang tối giản */}
+      <div>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold">Khuyến nghị & cảnh báo</h1>
+        <p className="text-muted-foreground mt-0.5 text-xs sm:text-sm">
+          Dự báo xu hướng chỉ số môi trường vùng rễ ớt và cảnh báo vận hành tự động
+        </p>
       </div>
 
-      {/* Khung thông tin mẫu đo ngày hiện tại & Chi tiết so sánh chỉ số */}
-      {aiBundle && (
-        <div className="rounded-xl border border-border bg-card p-4 shadow-xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
-              <span className="font-semibold text-foreground">
-                Mẫu đo: <span className="text-primary">{formatDateTimeVN(aiBundle.sensor_timestamp)}</span>
-              </span>
-              <span className="text-muted-foreground">•</span>
-              <span className="text-muted-foreground">
-                Giai đoạn {aiBundle.plant_context.stage_number}: {aiBundle.plant_context.growth_stage}
-              </span>
-              {aiBundle.status !== 'no_data_today' && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <span className="text-xs font-medium text-foreground">
-                    Ẩm {aiBundle.sensor_reading.moisture}% | pH {aiBundle.sensor_reading.pH} | EC {aiBundle.sensor_reading.EC} | Nhiệt đất {aiBundle.sensor_reading.soiltemp}°C | N:{aiBundle.sensor_reading.N} P:{aiBundle.sensor_reading.P} K:{aiBundle.sensor_reading.K}
-                  </span>
-                </>
+      {/* Phần 1: Dự báo xu hướng ngắn hạn & dài hạn */}
+      <UserForecastSection />
+
+      {/* Phần 2: Cảnh báo hệ thống */}
+      <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
+        {/* Thanh tiêu đề Cảnh báo hệ thống + Thông tin mẫu đo + Nút phân tích */}
+        <div className="p-4 sm:p-5 border-b border-border/60 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-warning/10 text-warning">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <h2 className="font-display text-base sm:text-lg font-semibold">Cảnh báo hệ thống</h2>
+              {aiBundle && (
+                <span className="rounded-lg bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground">
+                  Mẫu đo: <b className="text-foreground">{formatDateTimeVN(aiBundle.sensor_timestamp)}</b>
+                  {aiBundle.plant_context?.growth_stage ? ` • ${aiBundle.plant_context.growth_stage}` : ''}
+                </span>
               )}
             </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowPromptDetail((prev) => !prev)}
-              className="text-xs text-primary h-7 px-2 self-start sm:self-auto"
-            >
-              {showPromptDetail ? (
-                <>
-                  Thu gọn chi tiết <ChevronUp className="h-3.5 w-3.5 ml-1" />
-                </>
-              ) : (
-                <>
-                  Chi tiết so sánh chỉ số <ChevronDown className="h-3.5 w-3.5 ml-1" />
-                </>
-              )}
-            </Button>
           </div>
 
-          {showPromptDetail && (
-            <div className="rounded-lg bg-secondary/40 border border-border p-3.5 text-xs space-y-2.5 text-foreground/90">
-              {aiBundle.status === 'no_data_today' ? (
-                <p className="text-muted-foreground leading-relaxed">
-                  Hệ thống chưa ghi nhận số liệu đo nào trong ngày hôm nay trên Firebase. Sau khi thiết bị đo và gửi dữ liệu mới lên hệ thống, bạn hãy bấm nút <strong>Phân tích</strong> để AI kiểm tra với mức chuẩn và đưa ra cảnh báo.
-                </p>
-              ) : aiBundle.anomalies_detected && aiBundle.anomalies_detected.length > 0 ? (
-                <div className="space-y-2">
-                  <p className="font-semibold text-foreground">
-                    Các chỉ số vượt mức chuẩn phát hiện từ mẫu đo ({aiBundle.anomalies_detected.length} chỉ số):
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {aiBundle.anomalies_detected.map((item) => (
-                      <div
-                        key={item.key}
-                        className="rounded-lg bg-card border border-border px-3 py-2 flex items-center justify-between gap-2"
-                      >
-                        <div>
-                          <span className="font-semibold text-foreground block">{item.label}</span>
-                          <span className="text-[11px] text-muted-foreground">
-                            Chuẩn: {item.min} – {item.max}
-                            {item.unit}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-bold text-amber-600 dark:text-amber-400 block">
-                            {item.value}
-                            {item.unit}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground">
-                            Lệch {item.delta}
-                          </span>
-                        </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {aiBundle && aiBundle.status !== 'no_data_today' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowPromptDetail((prev) => !prev)}
+                className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              >
+                {showPromptDetail ? (
+                  <>
+                    Ẩn đối chiếu chuẩn <ChevronUp className="h-3.5 w-3.5 ml-1" />
+                  </>
+                ) : (
+                  <>
+                    Đối chiếu ngưỡng chuẩn ({aiBundle.anomalies_detected?.length ?? 0}) <ChevronDown className="h-3.5 w-3.5 ml-1" />
+                  </>
+                )}
+              </Button>
+            )}
+
+            {unconfirmedAlerts.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                onClick={() => setConfirmAllOpen(true)}
+              >
+                <CheckCheck className="h-3.5 w-3.5 mr-1.5" />
+                Xử lý tất cả ({unconfirmedAlerts.length})
+              </Button>
+            )}
+
+            {activeAlerts.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
+                onClick={() => setDismissAllOpen(true)}
+              >
+                <X className="h-3.5 w-3.5 mr-1" />
+                Hủy tất cả
+              </Button>
+            )}
+
+            <Button
+              size="sm"
+              disabled={isAnalyzing}
+              onClick={handleAnalyzeWithGemini}
+              className="h-8 text-xs gap-1.5"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', isAnalyzing && 'animate-spin')} />
+              {isAnalyzing ? 'Đang kiểm tra...' : 'Phân tích mẫu đo'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5 space-y-4">
+          {/* Bảng đối chiếu chỉ số vượt ngưỡng (chỉ mở khi người dùng bấm xem) */}
+          {showPromptDetail && aiBundle && (
+            <div className="rounded-xl bg-secondary/35 border border-border p-3.5 text-xs space-y-2.5">
+              {aiBundle.anomalies_detected && aiBundle.anomalies_detected.length > 0 ? (
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {aiBundle.anomalies_detected.map((item) => (
+                    <div
+                      key={item.key}
+                      className="rounded-lg bg-card border border-border px-3 py-2 flex items-center justify-between gap-2"
+                    >
+                      <div>
+                        <span className="font-semibold text-foreground block">{item.label}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Chuẩn: {item.min}–{item.max} {item.unit}
+                        </span>
                       </div>
-                    ))}
-                  </div>
+                      <div className="text-right">
+                        <span className="font-bold text-amber-600 dark:text-amber-400 block">
+                          {item.value} {item.unit}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">Lệch {item.delta}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <p className="text-emerald-600 dark:text-emerald-400 font-medium">
-                  Toàn bộ 9 chỉ số cảm biến trong mẫu đo ngày hôm nay đều nằm trong mức chuẩn an toàn.
+                  Toàn bộ 9 chỉ số cảm biến trong mẫu đo đều nằm trong ngưỡng chuẩn an toàn.
                 </p>
               )}
             </div>
           )}
-        </div>
-      )}
 
-      {/* Quick Batch Action Buttons */}
-      {activeAlerts.length > 0 && (
-        <div className="flex items-center justify-end gap-2 flex-wrap">
-          {unconfirmedAlerts.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-700"
-              onClick={() => setConfirmAllOpen(true)}
-            >
-              <CheckCheck className="h-4 w-4 mr-1.5" />
-              Đã xử lý tất cả ({unconfirmedAlerts.length})
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-destructive/30 text-destructive hover:bg-destructive/10"
-            onClick={() => setDismissAllOpen(true)}
-          >
-            <X className="h-4 w-4 mr-1.5" />
-            Hủy bỏ tất cả ({activeAlerts.length})
-          </Button>
-        </div>
-      )}
-
-      {/* Stats Cards */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        <div
-          onClick={() => setActiveTab('active')}
-          className={cn(
-            'rounded-xl border p-4 cursor-pointer transition-all hover:shadow-sm',
-            activeTab === 'active' ? 'border-primary bg-primary/5 shadow-sm' : 'border-border bg-card'
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Đang hoạt động</p>
-            <AlertTriangle className="h-4 w-4 text-warning" />
+          {/* Thanh 4 thẻ lọc trạng thái kiêm bộ chuyển tab (loại bỏ thanh tab trùng lặp) */}
+          <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-4">
+            {filterItems.map((item) => {
+              const Icon = item.icon;
+              const isSelected = activeTab === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setActiveTab(item.key)}
+                  className={cn(
+                    'rounded-xl border px-3.5 py-2.5 text-left transition-all flex items-center justify-between gap-2',
+                    isSelected
+                      ? cn(item.activeClass, 'shadow-2xs ring-1 ring-current/20')
+                      : 'border-border bg-secondary/20 hover:bg-secondary/50 text-foreground',
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Icon className={cn('h-4 w-4 shrink-0', item.iconClass)} />
+                    <span className="text-xs sm:text-sm font-medium truncate">{item.label}</span>
+                  </div>
+                  <span className="font-display text-lg font-bold shrink-0">{item.count}</span>
+                </button>
+              );
+            })}
           </div>
-          <p className="font-display text-2xl font-bold mt-2 text-foreground">{activeAlerts.length}</p>
-        </div>
 
-        <div
-          onClick={() => setActiveTab('unconfirmed')}
-          className={cn(
-            'rounded-xl border p-4 cursor-pointer transition-all hover:shadow-sm',
-            activeTab === 'unconfirmed' ? 'border-amber-500 bg-amber-500/5 shadow-sm' : 'border-border bg-card'
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Chờ xử lý</p>
-            <Clock className="h-4 w-4 text-amber-500" />
-          </div>
-          <p className="font-display text-2xl font-bold mt-2 text-amber-600">{unconfirmedAlerts.length}</p>
-        </div>
-
-        <div
-          onClick={() => setActiveTab('confirmed')}
-          className={cn(
-            'rounded-xl border p-4 cursor-pointer transition-all hover:shadow-sm',
-            activeTab === 'confirmed' ? 'border-emerald-500 bg-emerald-500/5 shadow-sm' : 'border-border bg-card'
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Đã xử lý</p>
-            <ShieldCheck className="h-4 w-4 text-emerald-500" />
-          </div>
-          <p className="font-display text-2xl font-bold mt-2 text-emerald-600">{confirmedAlerts.length}</p>
-        </div>
-
-        <div
-          onClick={() => setActiveTab('dismissed')}
-          className={cn(
-            'rounded-xl border p-4 cursor-pointer transition-all hover:shadow-sm',
-            activeTab === 'dismissed' ? 'border-muted-foreground bg-muted/30 shadow-sm' : 'border-border bg-card'
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Đã hủy bỏ</p>
-            <BellOff className="h-4 w-4 text-muted-foreground" />
-          </div>
-          <p className="font-display text-2xl font-bold mt-2 text-muted-foreground">{dismissedAlerts.length}</p>
-        </div>
-      </div>
-
-      {/* Tabs Navigation */}
-      <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as any)} className="w-full space-y-4">
-        <TabsList className="grid grid-cols-4 w-full sm:w-auto sm:inline-flex">
-          <TabsTrigger value="active" className="gap-1.5">
-            <span>Hoạt động</span>
-            <span className="text-xs px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-semibold">
-              {activeAlerts.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="unconfirmed" className="gap-1.5">
-            <span>Chờ xử lý</span>
-            {unconfirmedAlerts.length > 0 && (
-              <span className="text-xs px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-600 font-semibold">
-                {unconfirmedAlerts.length}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="confirmed" className="gap-1.5">
-            <span>Đã xử lý</span>
-            <span className="text-xs px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-600 font-semibold">
-              {confirmedAlerts.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="dismissed" className="gap-1.5">
-            <span>Đã hủy bỏ</span>
-            <span className="text-xs px-1.5 py-0.2 rounded-full bg-muted text-muted-foreground font-semibold">
-              {dismissedAlerts.length}
-            </span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value={activeTab} className="mt-4 space-y-4">
-          {displayedAlerts.length === 0 ? (
-            <div className="rounded-2xl border border-border bg-card p-12 text-center">
-              <BellOff className="h-12 w-12 mx-auto text-muted-foreground/60" />
-              <h3 className="mt-4 font-display text-xl font-semibold">
+          {/* Danh sách cảnh báo */}
+          {isLoading ? (
+            <div className="flex items-center justify-center h-40">
+              <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary"></div>
+            </div>
+          ) : displayedAlerts.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border bg-secondary/15 py-10 px-4 text-center">
+              <BellOff className="h-9 w-9 mx-auto text-muted-foreground/50" />
+              <h3 className="mt-2.5 font-display text-base font-semibold">
                 {activeTab === 'dismissed'
-                  ? 'Không có cảnh báo nào đã hủy bỏ'
+                  ? 'Không có cảnh báo đã hủy bỏ'
                   : activeTab === 'confirmed'
-                  ? 'Chưa có cảnh báo nào đã xử lý'
+                  ? 'Chưa có cảnh báo đã xử lý'
                   : aiBundle?.status === 'no_data_today'
-                  ? 'Chưa có dữ liệu đo của ngày hôm nay trên Firebase'
-                  : 'Không có cảnh báo nào'}
+                  ? 'Chưa có dữ liệu đo hôm nay'
+                  : 'Hệ thống đang hoạt động an toàn'}
               </h3>
-              <p className="mt-2 text-muted-foreground text-sm max-w-md mx-auto">
+              <p className="mt-1 text-muted-foreground text-xs max-w-md mx-auto">
                 {activeTab === 'dismissed'
-                  ? 'Các cảnh báo bị hủy bỏ sẽ được lưu trữ tại đây.'
+                  ? 'Các cảnh báo được hủy bỏ sẽ lưu trữ tại đây.'
                   : activeTab === 'confirmed'
-                  ? 'Bấm "Đã xử lý" trên các cảnh báo đang hoạt động sau khi bạn đã khắc phục.'
+                  ? 'Các cảnh báo sau khi khắc phục sẽ hiển thị tại mục này.'
                   : aiBundle?.status === 'no_data_today'
-                  ? 'Sau khi thiết bị đo và đẩy dữ liệu ngày hôm nay lên Firebase (/data), hãy bấm nút "Phân tích" để AI kiểm tra.'
-                  : 'Hệ thống cảm biến và các chỉ số đất đang trong giới hạn an toàn.'}
+                  ? 'Bấm "Phân tích mẫu đo" sau khi thiết bị gửi dữ liệu mới.'
+                  : 'Các chỉ số đất và môi trường hiện nằm trong ngưỡng ổn định.'}
               </p>
             </div>
           ) : (
-            displayedAlerts.map((alert) => {
-              const config = levelConfig[alert.level] || levelConfig[0];
-              const Icon = config.icon;
-              const isAcknowledged = !!alert.acknowledged;
-              const isDismissed = !alert.active || !!alert.dismissed;
+            <div className="space-y-3">
+              {displayedAlerts.map((alert) => {
+                const config = levelConfig[alert.level] || levelConfig[0];
+                const Icon = config.icon;
+                const isAcknowledged = !!alert.acknowledged;
+                const isDismissed = !alert.active || !!alert.dismissed;
 
-              return (
-                <div
-                  key={alert.id}
-                  className={cn(
-                    'rounded-xl border p-5 transition-all hover:shadow-md bg-card',
-                    isDismissed
-                      ? 'opacity-75 border-dashed border-border'
-                      : isAcknowledged
-                      ? 'border-emerald-500/40 bg-emerald-500/[0.02]'
-                      : cn(config.borderClass, config.bgClass)
-                  )}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-start gap-4 justify-between">
-                    <div className="flex items-start gap-4 flex-1">
-                      <div
-                        className={cn(
-                          'rounded-xl p-3 shrink-0',
-                          isDismissed ? 'bg-muted text-muted-foreground' : config.iconBgClass
-                        )}
-                      >
-                        <Icon className="h-5 w-5" />
-                      </div>
-
-                      <div className="flex-1 min-w-0 space-y-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="font-semibold text-base text-foreground">{alert.id}</h4>
-
-                          <span className={cn('text-xs px-2.5 py-0.5 rounded-full font-medium', config.iconBgClass)}>
-                            {config.label}
-                          </span>
-
-                          {isDismissed ? (
-                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border font-medium flex items-center gap-1">
-                              <X className="h-3 w-3" /> Đã hủy bỏ {alert.dismissedAt ? `(${formatDateTimeVN(alert.dismissedAt)})` : ''}
-                            </span>
-                          ) : isAcknowledged ? (
-                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 font-medium flex items-center gap-1">
-                              <CheckCircle2 className="h-3 w-3" /> Đã xử lý {alert.acknowledgedAt ? `(${formatDateTimeVN(alert.acknowledgedAt)})` : ''}
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 font-medium flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                              Chờ xử lý
-                            </span>
+                return (
+                  <div
+                    key={alert.id}
+                    className={cn(
+                      'rounded-xl border p-4 transition-all bg-card',
+                      isDismissed
+                        ? 'opacity-70 border-dashed border-border'
+                        : isAcknowledged
+                        ? 'border-emerald-500/35 bg-emerald-500/[0.02]'
+                        : cn(config.borderClass, config.bgClass)
+                    )}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-3.5 justify-between">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div
+                          className={cn(
+                            'rounded-xl p-2.5 shrink-0 mt-0.5',
+                            isDismissed ? 'bg-muted text-muted-foreground' : config.iconBgClass
                           )}
+                        >
+                          <Icon className="h-4 w-4" />
                         </div>
 
-                        <p className="text-sm font-medium text-foreground">{alert.message}</p>
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-semibold text-sm text-foreground">{alert.id}</h4>
+                            <span className={cn('text-[11px] px-2 py-0.5 rounded-md font-medium', config.iconBgClass)}>
+                              {config.label}
+                            </span>
 
-                        {alert.action && (
-                          <div className="rounded-lg bg-background/80 border border-border/80 p-3 text-sm">
-                            <p className="font-medium text-foreground flex items-center gap-1.5">
-                              <Sparkles className="h-4 w-4 text-primary shrink-0" />
-                              Khuyến nghị xử lý từ AI:
-                            </p>
-                            <p className="mt-1 text-muted-foreground text-sm pl-5">{alert.action}</p>
+                            {isDismissed ? (
+                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
+                                Đã hủy bỏ
+                              </span>
+                            ) : isAcknowledged ? (
+                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 font-medium flex items-center gap-1">
+                                <CheckCircle2 className="h-3 w-3" /> Đã xử lý
+                              </span>
+                            ) : (
+                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 font-medium flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                Chờ xử lý
+                              </span>
+                            )}
+
+                            <span className="text-[11px] text-muted-foreground ml-auto">
+                              {formatTime(alert.time)}
+                            </span>
                           </div>
-                        )}
 
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="h-3.5 w-3.5" />
-                          Thời điểm mẫu đo: {formatDateTimeVN(alert.time)} ({formatTime(alert.time)})
-                        </p>
+                          <p className="text-xs sm:text-sm text-foreground leading-relaxed">{alert.message}</p>
+
+                          {alert.action && (
+                            <div className="rounded-lg bg-background/80 border border-border/70 px-3 py-2 text-xs flex items-start gap-2">
+                              <Sprout className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                              <div className="space-y-0.5">
+                                <span className="font-semibold text-foreground">Hướng dẫn xử lý: </span>
+                                <span className="text-muted-foreground">{alert.action}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex sm:flex-col items-center sm:items-end gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border">
-                      {!isDismissed ? (
-                        <>
-                          {!isAcknowledged ? (
+                      <div className="flex sm:flex-col items-center sm:items-end gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
+                        {!isDismissed ? (
+                          <>
+                            {!isAcknowledged ? (
+                              <Button
+                                size="sm"
+                                className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1 w-full sm:w-auto"
+                                onClick={() => handleConfirm(alert)}
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                Đã xử lý
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 gap-1 w-full sm:w-auto"
+                                onClick={() => handleUnconfirm(alert)}
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Hoàn tác
+                              </Button>
+                            )}
+
                             <Button
                               size="sm"
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center gap-1.5 w-full sm:w-auto"
-                              onClick={() => handleConfirm(alert)}
+                              variant="ghost"
+                              className="h-8 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1 w-full sm:w-auto"
+                              onClick={() => setDismissTarget(alert)}
                             >
-                              <Check className="h-4 w-4" />
-                              Đã xử lý
+                              <X className="h-3.5 w-3.5" />
+                              Bỏ qua
                             </Button>
-                          ) : (
+                          </>
+                        ) : (
+                          <>
                             <Button
                               size="sm"
                               variant="outline"
-                              className="border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 flex items-center gap-1.5 w-full sm:w-auto text-xs"
-                              onClick={() => handleUnconfirm(alert)}
+                              className="h-8 text-xs gap-1 w-full sm:w-auto"
+                              onClick={() => handleReactivate(alert)}
                             >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                              Chưa xử lý
+                              <RotateCcw className="h-3 w-3" />
+                              Khôi phục
                             </Button>
-                          )}
 
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive flex items-center gap-1.5 w-full sm:w-auto"
-                            onClick={() => setDismissTarget(alert)}
-                          >
-                            <X className="h-4 w-4" />
-                            Hủy bỏ
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-border text-foreground hover:bg-accent flex items-center gap-1.5 w-full sm:w-auto"
-                            onClick={() => handleReactivate(alert)}
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                            Kích hoạt lại
-                          </Button>
-
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:bg-destructive/10 flex items-center gap-1.5 w-full sm:w-auto text-xs"
-                            onClick={() => setDeleteTarget(alert)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Xóa
-                          </Button>
-                        </>
-                      )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 text-xs text-destructive hover:bg-destructive/10 gap-1 w-full sm:w-auto"
+                              onClick={() => setDeleteTarget(alert)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Xóa
+                            </Button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      </div>
 
       {/* Modal Dialog: Hủy bỏ 1 cảnh báo */}
       <AlertDialog open={!!dismissTarget} onOpenChange={(open) => !open && setDismissTarget(null)}>
@@ -818,20 +746,17 @@ export default function AlertsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-destructive">
               <AlertOctagon className="h-5 w-5" />
-              Xác nhận hủy bỏ cảnh báo
+              Xác nhận bỏ qua cảnh báo
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               <p>
-                Bạn có chắc chắn muốn hủy bỏ cảnh báo <strong>{dismissTarget?.id}</strong>?
+                Bạn có chắc chắn muốn bỏ qua cảnh báo <strong>{dismissTarget?.id}</strong>?
               </p>
               {dismissTarget && (
-                <div className="rounded-lg bg-muted p-2.5 text-xs text-foreground font-mono">
+                <div className="rounded-lg bg-muted p-2.5 text-xs text-foreground">
                   {dismissTarget.message}
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">
-                Cảnh báo này sẽ được chuyển sang mục "Đã hủy bỏ" và không còn xuất hiện trong danh sách thông báo hoạt động.
-              </p>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -840,7 +765,7 @@ export default function AlertsPage() {
               onClick={handleDismissConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Đồng ý hủy bỏ
+              Đồng ý
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -855,16 +780,16 @@ export default function AlertsPage() {
               Hủy bỏ tất cả cảnh báo?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Hành động này sẽ hủy bỏ toàn bộ <strong>{activeAlerts.length}</strong> cảnh báo đang hoạt động và chuyển chúng vào mục lưu trữ.
+              Hành động này sẽ chuyển toàn bộ <strong>{activeAlerts.length}</strong> cảnh báo đang hoạt động vào mục đã hủy bỏ.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Không, giữ lại</AlertDialogCancel>
+            <AlertDialogCancel>Không</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDismissAll}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Hủy bỏ tất cả
+              Hủy tất cả
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -876,10 +801,10 @@ export default function AlertsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-emerald-600">
               <CheckCheck className="h-5 w-5" />
-              Đánh dấu đã xử lý toàn bộ cảnh báo?
+              Đánh dấu đã xử lý tất cả?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Đánh dấu đã xử lý cho tất cả <strong>{unconfirmedAlerts.length}</strong> cảnh báo đang chờ xử lý.
+              Đánh dấu đã xử lý cho toàn bộ <strong>{unconfirmedAlerts.length}</strong> cảnh báo đang chờ xử lý.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -888,7 +813,7 @@ export default function AlertsPage() {
               onClick={handleConfirmAll}
               className="bg-emerald-600 text-white hover:bg-emerald-700"
             >
-              Đã xử lý tất cả
+              Đồng ý
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -903,7 +828,7 @@ export default function AlertsPage() {
               Xóa vĩnh viễn cảnh báo?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Cảnh báo <strong>{deleteTarget?.id}</strong> sẽ bị xóa hoàn toàn khỏi cơ sở dữ liệu và không thể khôi phục lại.
+              Cảnh báo <strong>{deleteTarget?.id}</strong> sẽ bị xóa hoàn toàn và không thể khôi phục.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
