@@ -1,6 +1,6 @@
-# 🌱 IoT Farm - Hệ Thống Giám Sát & Điều Khiển Tưới Tiêu Thông Minh
+# 🌱 IoT Farm - Hệ thống giám sát & điều khiển tưới tiêu thông minh
 
-> **Dự án IoT Nông Nghiệp Thông Minh** — Trường Đại học Công nghệ Thông tin - ĐHQG TP.HCM (UIT)  
+> **Dự án IoT nông nghiệp thông minh** — Trường Đại học Công nghệ Thông tin - ĐHQG TP.HCM (UIT)  
 > Hệ thống IoT giám sát các thông số đất (NPK, pH, EC, độ ẩm, nhiệt độ) và điều khiển tưới tiêu thông minh theo thời gian thực kết nối Firebase.
 
 ---
@@ -40,7 +40,7 @@ Hệ thống đã **tắt màn hình đăng nhập**. Người dùng truy cập 
 - **Python**: Phiên bản 3.10 trở lên (Khuyến nghị Python 3.12).
 - **Trình quản lý gói**: `npm` và `pip`.
 
-### 2. Cấu hình Gemini AI API Key (Tùy chọn)
+### 2. Cấu hình Gemini AI API Key (tùy chọn)
 Để kích hoạt tính năng đề xuất chuyên sâu từ Google Gemini AI, bạn mở file `backend/.env` và dán API Key của bạn vào:
 ```bash
 GEMINI_API_KEY="AIzaSy..."
@@ -49,7 +49,7 @@ GEMINI_API_KEY="AIzaSy..."
 
 ### 3. Các bước khởi chạy
 
-#### Cách 1: Chạy song song cả Frontend & Backend từ thư mục gốc (Khuyến nghị)
+#### Cách 1: Chạy song song cả Frontend & Backend từ thư mục gốc (khuyến nghị)
 ```bash
 cd /Users/truonghoangduy/Documents/Project/IOT/iot_farm
 
@@ -160,6 +160,16 @@ iot_farm/
 ├── tailwind.config.ts      # Cấu hình giao diện Tailwind CSS
 └── vite.config.ts          # Cấu hình Vite server (cổng 8080)
 ```
+
+---
+
+## 🔤 Quy chuẩn viết hoa & văn phong tiếng Việt (Sentence Case)
+
+> [!IMPORTANT]
+> **Quy tắc bắt buộc:** Trong toàn bộ dự án (tiêu đề trang, nhãn biểu đồ, menu điều hướng, nút bấm, thông báo và tài liệu), **chỉ viết hoa chữ cái đầu tiên** của câu/cụm từ, các chữ còn lại **viết thường** (Sentence case).
+> - ✅ **Đúng:** *"Thời tiết & khí tượng nông nghiệp"*, *"Tổng quan hệ thống"*, *"Quản lý tưới tiêu thông minh"*, *"Dự báo vs thực tế trên tập test"*.
+> - ❌ **Không dùng Title Case:** *"Thời Tiết & Khí Tượng Nông Nghiệp"*, *"Tổng Quan Hệ Thống"*.
+> - **Ngoại lệ:** Tên riêng (Việt Nam, UIT, ĐHQG TP.HCM...) và thuật ngữ kỹ thuật viết tắt (IoT, AI, NPK, GPS, VPD, XGBoost, Jetson Nano...).
 
 ---
 

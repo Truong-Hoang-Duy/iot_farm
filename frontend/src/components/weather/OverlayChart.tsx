@@ -180,8 +180,8 @@ export function OverlayChart({ className, location }: { className?: string; loca
                 labelFormatter={(l: number) => fmtDateTime(l)}
                 formatter={(v: number, name: string) =>
                   name === 'w'
-                    ? [`${fmtNum(v, (wInfo?.digits ?? 1) + 1)} ${wInfo?.unit ?? ''}`, `${wInfo?.label ?? wVar} (Khí tượng)`]
-                    : [`${fmtNum(v, (sInfo?.digits ?? 1) + 1)} ${sInfo?.unit ?? ''}`, `${sInfo?.label ?? sVar} (Cảm biến đã xử lý)`]
+                    ? [`${fmtNum(v, (wInfo?.digits ?? 1) + 1)} ${wInfo?.unit ?? ''}`, `${wInfo?.label ?? wVar} (khí tượng)`]
+                    : [`${fmtNum(v, (sInfo?.digits ?? 1) + 1)} ${sInfo?.unit ?? ''}`, `${sInfo?.label ?? sVar} (cảm biến đã xử lý)`]
                 }
               />
               <Legend

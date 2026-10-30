@@ -245,7 +245,7 @@ export function describeError(e: unknown): { title: string; description: string;
       case 'not_trained':
         return {
           title: 'Mô hình chưa được huấn luyện',
-          description: e.detail || 'Hãy vào "Phòng thí nghiệm mô hình" và bấm Huấn luyện để tạo mô hình.',
+          description: e.detail || 'Hãy vào "Phòng thí nghiệm mô hình" và bấm huấn luyện để tạo mô hình.',
           kind: e.kind,
         };
       case 'not_found':

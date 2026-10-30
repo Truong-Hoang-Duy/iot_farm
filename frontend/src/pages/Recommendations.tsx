@@ -199,7 +199,7 @@ export default function RecommendationsPage() {
     } catch {
       toast({
         title: 'Chưa thể bật máy bơm',
-        description: 'Vui lòng kiểm tra kết nối thiết bị tại tab Điều khiển.',
+        description: 'Vui lòng kiểm tra kết nối thiết bị tại tab điều khiển.',
         variant: 'destructive',
       });
     } finally {

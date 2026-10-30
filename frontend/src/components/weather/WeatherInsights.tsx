@@ -86,8 +86,8 @@ export function generateInsights(near: WeatherHourly[], corr?: CorrelationRespon
       out.push({
         icon: CloudRain,
         tone: 'info',
-        title: 'Dự báo mưa lớn trong 24–48 giờ tới → Hoãn bón phân gốc NPK',
-        text: `Dự báo ${fmtNum(r48.sum, 1)} mm vào ngày mai đến ngày kia – nên tạm hoãn bón thúc Đạm, Lân, Kali vào gốc để tránh rửa trôi dinh dưỡng qua tầng đất 0–30 cm.`,
+        title: 'Dự báo mưa lớn trong 24–48 giờ tới → hoãn bón phân gốc NPK',
+        text: `Dự báo ${fmtNum(r48.sum, 1)} mm vào ngày mai đến ngày kia – nên tạm hoãn bón thúc đạm, lân, kali vào gốc để tránh rửa trôi dinh dưỡng qua tầng đất 0–30 cm.`,
       });
     }
     if (r24.n && r48.n && r24.sum + r48.sum < 1) {
