@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CloudSun, Compass, History, MapPin, Navigation, Radar, RefreshCw, Sigma, Sparkles } from 'lucide-react';
+import { CloudSun, Compass, History, MapPin, Navigation, Radar, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
@@ -22,12 +22,10 @@ import { CurrentWeatherCard } from '@/components/weather/CurrentWeatherCard';
 import { DailyStrip, WeatherCharts } from '@/components/weather/WeatherCharts';
 import { DateRangePicker, presetRange, type DateRange } from '@/components/weather/DateRangePicker';
 import { OverlayChart } from '@/components/weather/OverlayChart';
-import { CorrelationHeatmap, LagTable } from '@/components/weather/CorrelationHeatmap';
 import { InsightsList, generateInsights } from '@/components/weather/WeatherInsights';
 
 const H = 3600_000;
 const FORECAST_DAYS = [7, 14, 16];
-const CORR_DAYS = [30, 90, 260];
 
 function Segmented<T extends string | number>({
   options,
@@ -62,8 +60,6 @@ export default function Weather() {
   const [tab, setTab] = useState('now');
   const [range, setRange] = useState<DateRange>(() => presetRange(7));
   const [fcDays, setFcDays] = useState(7);
-  const [corrDays, setCorrDays] = useState(90);
-  const [method, setMethod] = useState<'pearson' | 'spearman'>('pearson');
   const [location, setLocation] = useState<FarmLocationConfig>(() => getSelectedWeatherLocation());
   const [latInput, setLatInput] = useState(() => String(getSelectedWeatherLocation().lat));
   const [lonInput, setLonInput] = useState(() => String(getSelectedWeatherLocation().lon));
@@ -176,15 +172,7 @@ export default function Weather() {
     retry: shouldRetry,
   });
 
-  // ---- Tương quan ----
-  const corrQ = useQuery({
-    queryKey: [...queryKeys.weatherCorrelation(corrDays, method, 24), coordKey],
-    queryFn: ({ signal }) => backendAPI.getWeatherCorrelation({ days: corrDays, method, max_lag_h: 24 }, signal, location),
-    staleTime: 10 * 60_000,
-    retry: shouldRetry,
-  });
-
-  const insights = useMemo(() => generateInsights(nearAll, corrQ.data, now, currentQ.data?.next24h), [nearAll, corrQ.data, now, currentQ.data?.next24h]);
+  const insights = useMemo(() => generateInsights(nearAll, undefined, now, currentQ.data?.next24h), [nearAll, now, currentQ.data?.next24h]);
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -194,10 +182,10 @@ export default function Weather() {
           <div>
             <h1 className="font-display text-3xl font-bold flex items-center gap-3">
               <CloudSun className="h-8 w-8 text-primary" />
-              Thời tiết &amp; Tương quan Nông – Khí tượng
+              Thời tiết &amp; Khí tượng Nông nghiệp
             </h1>
             <p className="text-muted-foreground mt-1">
-              10 đặc trưng khí tượng chọn lọc từ Open-Meteo (ECMWF IFS + ERA5-Land) theo đúng tọa độ GPS đã chọn và mức ảnh hưởng tới 9 thông số cảm biến cốt lõi
+              Theo dõi thời tiết thực tế, cân bằng nước tưới và dự báo dài hạn tại đúng tọa độ vùng trồng
             </p>
           </div>
           <Button
@@ -210,7 +198,6 @@ export default function Weather() {
               pastQ.refetch();
               historyQ.refetch();
               forecastQ.refetch();
-              corrQ.refetch();
             }}
             disabled={currentQ.isFetching}
           >
@@ -357,67 +344,6 @@ export default function Weather() {
       </div>
 
       <OverlayChart location={location} />
-
-      {/* Correlation */}
-      <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="font-display text-lg sm:text-xl font-semibold flex items-center gap-2">
-            <Sigma className="h-5 w-5 text-primary" />
-            Tương quan thời tiết ↔ cảm biến
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            <Segmented<'pearson' | 'spearman'>
-              options={['pearson', 'spearman'] as ('pearson' | 'spearman')[]}
-              value={method}
-              onChange={setMethod}
-              render={(m) => (m === 'pearson' ? 'Pearson' : 'Spearman')}
-            />
-            <Segmented<number> options={CORR_DAYS} value={corrDays} onChange={setCorrDays} render={(d) => `${d} ngày`} />
-          </div>
-        </div>
-        {corrQ.isLoading ? (
-          <ChartSkeleton className="h-64" />
-        ) : corrQ.isError ? (
-          <ErrorState error={corrQ.error} onRetry={() => corrQ.refetch()} className="h-56" showTrainLink={false} />
-        ) : corrQ.data ? (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-xl border border-border/70 bg-secondary/20 p-3.5 text-xs">
-              <div className="space-y-1">
-                <p className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-primary" />
-                  1. Khí quyển &amp; Bức xạ (T2m, RH2m, VPD, Bức xạ, ET0)
-                </p>
-                <p className="text-muted-foreground leading-relaxed">
-                  Tác động tức thời (0h) rất mạnh lên <b>Nhiệt độ KK</b> (<span className="font-mono">r ≈ +0.70</span>) và <b>Độ ẩm KK</b> (<span className="font-mono">r ≈ +0.86</span> với RH2m, <span className="font-mono">-0.85</span> với VPD), đồng thời truyền nhiệt xuống <b>Nhiệt độ đất</b> với <b>độ trễ +5h → +7h</b> (<span className="font-mono">r ≈ +0.75</span>).
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-blue-500" />
-                  2. Tích lũy Mưa &amp; Cân bằng nước (Mưa 24h/72h, P−ET0)
-                </p>
-                <p className="text-muted-foreground leading-relaxed">
-                  Mưa 1h đơn lẻ nhiễu cao, nhưng <b>Tổng mưa 24h</b> và <b>Cân bằng nước (P − ET0)</b> quyết định trực tiếp <b>Độ ẩm đất</b> (<span className="font-mono">r ≈ +0.62</span>) và giảm <b>pH đất</b> (<span className="font-mono">r ≈ -0.45</span>). <b>Tổng mưa 72h</b> phản ánh rõ hiện tượng rửa trôi dinh dưỡng <b>EC, N, P, K</b> (<span className="font-mono">r ≈ -0.23 → -0.33</span>).
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-emerald-500" />
-                  3. Mô hình Đất ERA5-Land (Nhiệt độ &amp; Ẩm đất 0–7cm)
-                </p>
-                <p className="text-muted-foreground leading-relaxed">
-                  Đóng vai trò biến cầu nối vật lý có tương quan cao nhất với cả 6 thông số dưới mặt đất: <b>Nhiệt độ đất</b> (<span className="font-mono">r = +0.76</span>), <b>Độ ẩm đất</b> (<span className="font-mono">r = +0.55</span>), <b>pH</b> (<span className="font-mono">-0.49</span>) và nhóm khoáng <b>EC, N, P, K</b> (<span className="font-mono">r ≈ -0.33 → -0.42</span>).
-                </p>
-              </div>
-            </div>
-            <CorrelationHeatmap data={corrQ.data} />
-            <LagTable data={corrQ.data} />
-            <p className="text-[11px] text-muted-foreground">
-              Pearson đo quan hệ tuyến tính; Spearman đo quan hệ đơn điệu (dựa trên thứ hạng, ít nhạy với ngoại lai). Đã loại bỏ các biến thời tiết nhiễu thấp (Mây che phủ, Gió 10m, Mưa 1h rời rạc) để tập trung vào 10 đặc trưng nông – khí tượng cốt lõi.
-            </p>
-          </>
-        ) : null}
-      </div>
     </div>
   );
 }

@@ -159,7 +159,7 @@ export function InsightsList({ insights, className }: { insights: Insight[]; cla
         Nhận định tự động
       </h2>
       {insights.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Chưa đủ dữ liệu để đưa ra nhận định (cần dự báo thời tiết và/hoặc ma trận tương quan).</p>
+        <p className="text-sm text-muted-foreground">Đang tổng hợp nhận định canh tác từ dự báo thời tiết 24–48 giờ tới.</p>
       ) : (
         <ul className="grid gap-2 md:grid-cols-2">
           {insights.map((ins, i) => (

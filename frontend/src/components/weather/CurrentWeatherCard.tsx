@@ -73,7 +73,7 @@ export function CurrentWeatherCard({ data, isLoading, error, onRetry, className 
               <span className="truncate font-medium text-foreground">{locName}</span>
             </p>
             <p className="text-[11px] text-muted-foreground font-mono">
-              ({fmtNum(lat, 4)}°N, {fmtNum(lon, 4)}°E) · Open-Meteo IFS + ERA5-Land
+              ({fmtNum(lat, 4)}°N, {fmtNum(lon, 4)}°E)
             </p>
             <div className="flex items-center gap-3">
               <span className="text-5xl">{wmo.emoji}</span>
@@ -95,40 +95,40 @@ export function CurrentWeatherCard({ data, isLoading, error, onRetry, className 
             )}
           </div>
           <div className="grid flex-1 grid-cols-2 sm:grid-cols-4 gap-2">
-            <Stat icon={Droplets} label="Độ ẩm KK (2m)" value={pick('relative_humidity_2m')} unit="%" color="bg-water/15 text-water" />
-            <Stat icon={Gauge} label="Áp suất hơi thiếu hụt (VPD)" value={pick('vapour_pressure_deficit')} unit="kPa" color="bg-purple-500/15 text-purple-600" />
+            <Stat icon={Droplets} label="Độ ẩm không khí" value={pick('relative_humidity_2m')} unit="%" color="bg-water/15 text-water" />
+            <Stat icon={Gauge} label="Độ thiếu hụt hơi nước" value={pick('vapour_pressure_deficit')} unit="kPa" color="bg-purple-500/15 text-purple-600" />
             <Stat icon={Sun} label="Bức xạ mặt trời" value={pick('shortwave_radiation')} unit="W/m²" color="bg-warning/15 text-warning" />
             <Stat
               icon={Sprout}
-              label="Bốc thoát hơi ET0 (24h)"
+              label="Bốc thoát hơi nước (24h)"
               value={et0Total24}
               unit="mm"
               color="bg-success/15 text-success"
             />
             <Stat
               icon={CloudRain}
-              label="Tổng mưa 24h tới"
+              label="Dự báo mưa 24h tới"
               value={rainTotal24}
               unit="mm"
               color="bg-blue-500/15 text-blue-600"
             />
             <Stat
               icon={Waves}
-              label="Cân bằng nước 24h (P−ET0)"
+              label="Cân bằng nước 24h"
               value={waterBalance24}
               unit="mm"
               color="bg-cyan-500/15 text-cyan-600"
             />
             <Stat
               icon={Thermometer}
-              label="Nhiệt độ đất (ERA5)"
+              label="Nhiệt độ đất tầng mặt"
               value={pick('soil_temperature') ?? pick('soil_temperature_0cm')}
               unit="°C"
               color="bg-soil/15 text-soil"
             />
             <Stat
               icon={Droplets}
-              label="Ẩm đất tầng rễ (ERA5)"
+              label="Độ ẩm đất vùng rễ"
               value={
                 pick('soil_moisture') !== undefined
                   ? (pick('soil_moisture') as number) <= 1
