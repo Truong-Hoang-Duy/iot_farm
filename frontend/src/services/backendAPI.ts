@@ -156,7 +156,57 @@ export const METRICS: MetricDef[] = [
 
 export const METRIC_MAP: Record<string, MetricDef> = Object.fromEntries(METRICS.map((m) => [m.key, m]));
 
-export const FARM_LOCATION = { lat: 10.8433, lon: 106.8389 };
+export interface FarmLocationConfig {
+  lat: number;
+  lon: number;
+  name: string;
+}
+
+export const FARM_LOCATION_PRESETS: FarmLocationConfig[] = [
+  { lat: 10.8433, lon: 106.8389, name: 'Trạm thực nghiệm Thủ Đức (Khu CNC TP.HCM)' },
+  { lat: 10.8700, lon: 106.8031, name: 'ĐH CNTT – ĐHQG TP.HCM (Linh Trung, Thủ Đức)' },
+  { lat: 11.0067, lon: 106.5133, name: 'Khu Nông nghiệp Công nghệ cao Củ Chi' },
+  { lat: 11.9404, lon: 108.4583, name: 'Vùng chuyên canh Đà Lạt – Lâm Đồng' },
+];
+
+export const FARM_LOCATION: FarmLocationConfig = FARM_LOCATION_PRESETS[0];
+
+const LOCATION_STORAGE_KEY = 'iot_farm_weather_location_v1';
+
+export function getSelectedWeatherLocation(): FarmLocationConfig {
+  try {
+    const raw = localStorage.getItem(LOCATION_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const lat = Number(parsed?.lat);
+      const lon = Number(parsed?.lon);
+      if (Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        return {
+          lat: Number(lat.toFixed(4)),
+          lon: Number(lon.toFixed(4)),
+          name: typeof parsed?.name === 'string' && parsed.name.trim() ? parsed.name.trim() : `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+        };
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return FARM_LOCATION;
+}
+
+export function setSelectedWeatherLocation(loc: FarmLocationConfig): FarmLocationConfig {
+  const normalized: FarmLocationConfig = {
+    lat: Number(Number(loc.lat).toFixed(4)),
+    lon: Number(Number(loc.lon).toFixed(4)),
+    name: loc.name?.trim() || `${Number(loc.lat).toFixed(4)}, ${Number(loc.lon).toFixed(4)}`,
+  };
+  try {
+    localStorage.setItem(LOCATION_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {
+    // ignore storage errors
+  }
+  return normalized;
+}
 
 // ============================================================================
 // Lỗi & fetch
@@ -871,36 +921,37 @@ export function parseTrainStatus(raw: unknown): TrainStatus {
 export const WEATHER_VARS = [
   'temperature_2m',
   'relative_humidity_2m',
-  'precipitation',
-  'rain',
-  'cloud_cover',
+  'vapour_pressure_deficit',
   'shortwave_radiation',
   'et0_fao_evapotranspiration',
-  'vapour_pressure_deficit',
-  'wind_speed_10m',
-  'dew_point_2m',
-  'surface_pressure',
+  'precipitation_24h',
+  'precipitation_72h',
+  'water_balance_24h',
   'soil_temperature',
   'soil_moisture',
+  'precipitation',
 ] as const;
 
 export type WeatherVar = (typeof WEATHER_VARS)[number];
 
 export const WEATHER_VAR_INFO: Record<string, { label: string; unit: string; color: string; digits: number }> = {
-  temperature_2m: { label: 'Nhiệt độ 2m', unit: '°C', color: 'hsl(0, 75%, 55%)', digits: 1 },
-  relative_humidity_2m: { label: 'Độ ẩm 2m', unit: '%', color: 'hsl(215, 75%, 55%)', digits: 0 },
-  precipitation: { label: 'Lượng mưa', unit: 'mm', color: 'hsl(200, 90%, 45%)', digits: 1 },
+  temperature_2m: { label: 'Nhiệt độ KK chuẩn 2m', unit: '°C', color: 'hsl(0, 75%, 55%)', digits: 1 },
+  relative_humidity_2m: { label: 'Độ ẩm KK chuẩn 2m', unit: '%', color: 'hsl(215, 75%, 55%)', digits: 0 },
+  vapour_pressure_deficit: { label: 'Thâm hụt áp suất hơi VPD', unit: 'kPa', color: 'hsl(300, 50%, 50%)', digits: 2 },
+  shortwave_radiation: { label: 'Bức xạ mặt trời sóng ngắn', unit: 'W/m²', color: 'hsl(42, 95%, 50%)', digits: 0 },
+  et0_fao_evapotranspiration: { label: 'Bốc thoát hơi chuẩn FAO ET0', unit: 'mm', color: 'hsl(150, 60%, 40%)', digits: 2 },
+  precipitation: { label: 'Lượng mưa giờ', unit: 'mm', color: 'hsl(200, 90%, 45%)', digits: 1 },
+  precipitation_24h: { label: 'Tổng mưa tích lũy 24h', unit: 'mm', color: 'hsl(205, 85%, 45%)', digits: 1 },
+  precipitation_72h: { label: 'Tổng mưa 72h (Chỉ số rửa trôi)', unit: 'mm', color: 'hsl(220, 80%, 50%)', digits: 1 },
+  water_balance_24h: { label: 'Cân bằng nước 24h (P − ET0)', unit: 'mm', color: 'hsl(175, 75%, 38%)', digits: 1 },
   rain: { label: 'Mưa', unit: 'mm', color: 'hsl(205, 80%, 50%)', digits: 1 },
   cloud_cover: { label: 'Mây che phủ', unit: '%', color: 'hsl(220, 10%, 55%)', digits: 0 },
-  shortwave_radiation: { label: 'Bức xạ sóng ngắn', unit: 'W/m²', color: 'hsl(42, 95%, 50%)', digits: 0 },
-  et0_fao_evapotranspiration: { label: 'Bốc thoát hơi ET0', unit: 'mm', color: 'hsl(150, 60%, 40%)', digits: 2 },
-  vapour_pressure_deficit: { label: 'VPD', unit: 'kPa', color: 'hsl(300, 50%, 50%)', digits: 2 },
   wind_speed_10m: { label: 'Gió 10m', unit: 'km/h', color: 'hsl(180, 55%, 40%)', digits: 1 },
   dew_point_2m: { label: 'Điểm sương 2m', unit: '°C', color: 'hsl(190, 60%, 45%)', digits: 1 },
   surface_pressure: { label: 'Áp suất bề mặt', unit: 'hPa', color: 'hsl(250, 35%, 55%)', digits: 0 },
   precipitation_probability: { label: 'Xác suất mưa', unit: '%', color: 'hsl(205, 60%, 60%)', digits: 0 },
-  soil_temperature: { label: 'Nhiệt độ đất (ERA5)', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
-  soil_moisture: { label: 'Độ ẩm đất (ERA5)', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
+  soil_temperature: { label: 'Nhiệt độ đất tầng rễ (ERA5-Land)', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
+  soil_moisture: { label: 'Độ ẩm đất tầng rễ (ERA5-Land)', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
   soil_temperature_0cm: { label: 'Nhiệt độ đất 0cm', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
   soil_moisture_0_to_1cm: { label: 'Độ ẩm đất 0–1cm', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
 };
@@ -966,9 +1017,40 @@ function parseTimeRows(x: unknown): WeatherHourly[] {
     .sort((a, b) => a.ts - b.ts);
 }
 
+function enrichHourlyAgroFeatures(rows: WeatherHourly[]): WeatherHourly[] {
+  if (!rows.length) return rows;
+  return rows.map((row, idx) => {
+    if (
+      row.precipitation_24h !== undefined &&
+      row.precipitation_72h !== undefined &&
+      row.water_balance_24h !== undefined
+    ) {
+      return row;
+    }
+    let p24 = 0;
+    let p72 = 0;
+    let et24 = 0;
+    const lo24 = Math.max(0, idx - 23);
+    const lo72 = Math.max(0, idx - 71);
+    for (let i = lo24; i <= idx; i++) {
+      p24 += num(rows[i].precipitation) ?? 0;
+      et24 += num(rows[i].et0_fao_evapotranspiration) ?? 0;
+    }
+    for (let i = lo72; i <= idx; i++) {
+      p72 += num(rows[i].precipitation) ?? 0;
+    }
+    return {
+      ...row,
+      precipitation_24h: row.precipitation_24h ?? Number(p24.toFixed(2)),
+      precipitation_72h: row.precipitation_72h ?? Number(p72.toFixed(2)),
+      water_balance_24h: row.water_balance_24h ?? Number((p24 - et24).toFixed(2)),
+    };
+  });
+}
+
 export function parseWeather(raw: unknown): WeatherResponse {
   if (!isObj(raw)) {
-    if (Array.isArray(raw)) return { hourly: parseTimeRows(raw), daily: [] };
+    if (Array.isArray(raw)) return { hourly: enrichHourlyAgroFeatures(parseTimeRows(raw)), daily: [] };
     return { hourly: [], daily: [] };
   }
   const loc = isObj(raw.location) ? raw.location : undefined;
@@ -989,7 +1071,7 @@ export function parseWeather(raw: unknown): WeatherResponse {
         ? { lat: num(raw.latitude), lon: num(raw.longitude) }
         : undefined,
     timezone: str(raw.timezone),
-    hourly: parseTimeRows(raw.hourly),
+    hourly: enrichHourlyAgroFeatures(parseTimeRows(raw.hourly)),
     daily: parseTimeRows(raw.daily),
     current,
     next24h: isObj(raw.next24h)
@@ -1155,15 +1237,21 @@ const OM_DAILY_VARS = [
   'weather_code',
 ];
 
-let cachedOpenMeteoPayload: { at: number; data: Obj } | null = null;
+const cachedOpenMeteoByCoord = new Map<string, { at: number; data: Obj }>();
 
-async function fetchOpenMeteoForecastRaw(signal?: AbortSignal): Promise<Obj> {
-  if (cachedOpenMeteoPayload && Date.now() - cachedOpenMeteoPayload.at < 5 * 60_000) {
-    return cachedOpenMeteoPayload.data;
+function isDefaultCoord(lat: number, lon: number): boolean {
+  return Math.abs(lat - FARM_LOCATION.lat) < 1e-3 && Math.abs(lon - FARM_LOCATION.lon) < 1e-3;
+}
+
+async function fetchOpenMeteoForecastRaw(signal?: AbortSignal, loc = getSelectedWeatherLocation()): Promise<Obj> {
+  const key = `${loc.lat.toFixed(4)}_${loc.lon.toFixed(4)}`;
+  const cached = cachedOpenMeteoByCoord.get(key);
+  if (cached && Date.now() - cached.at < 5 * 60_000) {
+    return cached.data;
   }
   const qs = new URLSearchParams({
-    latitude: String(FARM_LOCATION.lat),
-    longitude: String(FARM_LOCATION.lon),
+    latitude: String(loc.lat),
+    longitude: String(loc.lon),
     hourly: [...OM_HOURLY_VARS, 'soil_temperature_6cm', 'soil_moisture_3_to_9cm', 'precipitation_probability'].join(','),
     daily: OM_DAILY_VARS.join(','),
     current: OM_CURRENT_VARS.join(','),
@@ -1174,7 +1262,7 @@ async function fetchOpenMeteoForecastRaw(signal?: AbortSignal): Promise<Obj> {
   const res = await fetch(`${OPEN_METEO_FORECAST_URL}?${qs.toString()}`, { signal });
   if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
   const data = (await res.json()) as Obj;
-  cachedOpenMeteoPayload = { at: Date.now(), data };
+  cachedOpenMeteoByCoord.set(key, { at: Date.now(), data });
   return data;
 }
 
@@ -1193,7 +1281,7 @@ function normalizeOpenMeteoHourly(hourlyObj: unknown): WeatherHourly[] {
   if (normalized.soil_moisture_0_to_7cm && !normalized.soil_moisture) {
     normalized.soil_moisture = normalized.soil_moisture_0_to_7cm;
   }
-  return parseTimeRows(normalized);
+  return enrichHourlyAgroFeatures(parseTimeRows(normalized));
 }
 
 function computeNext24hSummary(hourly: WeatherHourly[], nowMs: number): WeatherNext24h {
@@ -1310,12 +1398,12 @@ async function fallbackWeatherCorrelation(p: {
   const wVars = [
     'temperature_2m',
     'relative_humidity_2m',
-    'precipitation',
-    'cloud_cover',
+    'vapour_pressure_deficit',
     'shortwave_radiation',
     'et0_fao_evapotranspiration',
-    'vapour_pressure_deficit',
-    'wind_speed_10m',
+    'precipitation_24h',
+    'precipitation_72h',
+    'water_balance_24h',
     'soil_temperature',
     'soil_moisture',
   ];
@@ -1474,77 +1562,104 @@ export const backendAPI = {
 
   // ---- Weather ----
   async getWeatherCurrent(signal?: AbortSignal): Promise<WeatherResponse> {
+    const loc = getSelectedWeatherLocation();
     try {
-      return parseWeather(await get('/weather/current', undefined, signal));
+      const res = parseWeather(await get('/weather/current', { lat: loc.lat, lon: loc.lon }, signal));
+      if (isDefaultCoord(loc.lat, loc.lon) || (res.location?.lat && Math.abs(res.location.lat - loc.lat) < 0.01)) {
+        return { ...res, location: { ...loc, ...res.location, name: loc.name } };
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      const raw = await fetchOpenMeteoForecastRaw(signal);
-      const hourlyAll = normalizeOpenMeteoHourly(raw.hourly);
-      const nowMs = Date.now();
-      const hourly = hourlyAll.filter((r) => r.ts >= nowMs - 12 * 3600_000 && r.ts <= nowMs + 48 * 3600_000);
-      return parseWeather({
-        ...raw,
-        location: FARM_LOCATION,
-        hourly,
-        next24h: computeNext24hSummary(hourlyAll, nowMs),
-      });
     }
+    const raw = await fetchOpenMeteoForecastRaw(signal, loc);
+    const hourlyAll = normalizeOpenMeteoHourly(raw.hourly);
+    const nowMs = Date.now();
+    const hourly = hourlyAll.filter((r) => r.ts >= nowMs - 12 * 3600_000 && r.ts <= nowMs + 48 * 3600_000);
+    return parseWeather({
+      ...raw,
+      location: loc,
+      hourly,
+      next24h: computeNext24hSummary(hourlyAll, nowMs),
+    });
   },
 
   /** start/end: 'YYYY-MM-DD' */
   async getWeatherHistory(p: { start: string; end: string }, signal?: AbortSignal): Promise<WeatherResponse> {
+    const loc = getSelectedWeatherLocation();
     try {
-      return parseWeather(await get('/weather/history', { start: p.start, end: p.end }, signal));
+      const res = parseWeather(await get('/weather/history', { start: p.start, end: p.end, lat: loc.lat, lon: loc.lon }, signal));
+      if (isDefaultCoord(loc.lat, loc.lon) || (res.location?.lat && Math.abs(res.location.lat - loc.lat) < 0.01)) {
+        return { ...res, location: { ...loc, ...res.location, name: loc.name } };
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      const startMs = toMs(p.start) ?? 0;
-      const endMs = (toMs(p.end) ?? Date.now()) + 86400_000;
-      const raw = await fetchOpenMeteoForecastRaw(signal);
-      let hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= startMs && r.ts < endMs && r.ts <= Date.now());
-      if (!hourly.length) {
+    }
+    const startMs = toMs(p.start) ?? 0;
+    const endMs = (toMs(p.end) ?? Date.now()) + 86400_000;
+    const raw = await fetchOpenMeteoForecastRaw(signal, loc);
+    let hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= startMs && r.ts < endMs && r.ts <= Date.now());
+    if (!hourly.length || startMs < Date.now() - 90 * 86400_000) {
+      const archiveEnd = vnDateString(Math.min(endMs - 86400_000, Date.now() - 6 * 86400_000));
+      if (p.start <= archiveEnd) {
         const qs = new URLSearchParams({
-          latitude: String(FARM_LOCATION.lat),
-          longitude: String(FARM_LOCATION.lon),
+          latitude: String(loc.lat),
+          longitude: String(loc.lon),
           start_date: p.start,
-          end_date: p.end,
+          end_date: archiveEnd,
           hourly: [...OM_HOURLY_VARS, 'soil_temperature_0_to_7cm', 'soil_moisture_0_to_7cm'].join(','),
           timezone: 'Asia/Ho_Chi_Minh',
         });
-        const archRes = await fetch(`${OPEN_METEO_ARCHIVE_URL}?${qs.toString()}`, { signal });
-        if (archRes.ok) {
+        const archRes = await fetch(`${OPEN_METEO_ARCHIVE_URL}?${qs.toString()}`, { signal }).catch(() => null);
+        if (archRes && archRes.ok) {
           const archJson = (await archRes.json()) as Obj;
-          hourly = normalizeOpenMeteoHourly(archJson.hourly);
+          const archHourly = normalizeOpenMeteoHourly(archJson.hourly);
+          const mergedMap = new Map<number, WeatherHourly>();
+          for (const r of hourly) mergedMap.set(r.ts, r);
+          for (const r of archHourly) if (r.ts >= startMs && r.ts < endMs) mergedMap.set(r.ts, r);
+          hourly = enrichHourlyAgroFeatures([...mergedMap.values()].sort((a, b) => a.ts - b.ts));
         }
       }
-      return { location: FARM_LOCATION, timezone: 'Asia/Ho_Chi_Minh', hourly, daily: [] };
     }
+    return { location: loc, timezone: 'Asia/Ho_Chi_Minh', hourly, daily: [] };
   },
 
   async getWeatherForecast(days: number, signal?: AbortSignal): Promise<WeatherResponse> {
+    const loc = getSelectedWeatherLocation();
     try {
-      return parseWeather(await get('/weather/forecast', { days }, signal));
+      const res = parseWeather(await get('/weather/forecast', { days, lat: loc.lat, lon: loc.lon }, signal));
+      if (isDefaultCoord(loc.lat, loc.lon) || (res.location?.lat && Math.abs(res.location.lat - loc.lat) < 0.01)) {
+        return { ...res, location: { ...loc, ...res.location, name: loc.name } };
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      const raw = await fetchOpenMeteoForecastRaw(signal);
-      const nowMs = Math.floor(Date.now() / 3600_000) * 3600_000;
-      const hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= nowMs && r.ts < nowMs + days * 86400_000);
-      const daily = parseTimeRows(raw.daily).filter((d) => d.ts >= nowMs - 86400_000).slice(0, days);
-      return { location: FARM_LOCATION, timezone: 'Asia/Ho_Chi_Minh', hourly, daily };
     }
+    const raw = await fetchOpenMeteoForecastRaw(signal, loc);
+    const nowMs = Math.floor(Date.now() / 3600_000) * 3600_000;
+    const hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= nowMs && r.ts < nowMs + days * 86400_000);
+    const daily = parseTimeRows(raw.daily).filter((d) => d.ts >= nowMs - 86400_000).slice(0, days);
+    return { location: loc, timezone: 'Asia/Ho_Chi_Minh', hourly, daily };
   },
 
   async getWeatherCorrelation(
     p: { days: number; method: 'pearson' | 'spearman'; max_lag_h?: number },
     signal?: AbortSignal,
   ): Promise<CorrelationResponse> {
+    const loc = getSelectedWeatherLocation();
     try {
-      return parseCorrelation(
-        await get('/weather/correlation', { days: p.days, method: p.method, max_lag_h: p.max_lag_h ?? 24 }, signal),
+      const res = parseCorrelation(
+        await get(
+          '/weather/correlation',
+          { days: p.days, method: p.method, max_lag_h: p.max_lag_h ?? 24, lat: loc.lat, lon: loc.lon },
+          signal,
+        ),
       );
+      if (isDefaultCoord(loc.lat, loc.lon) && res.variables_weather.includes('water_balance_24h')) {
+        return res;
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
-      return fallbackWeatherCorrelation(p);
     }
+    return fallbackWeatherCorrelation(p);
   },
 
   // ---- Sensor history ----

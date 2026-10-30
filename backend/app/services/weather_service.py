@@ -90,17 +90,25 @@ def _hourly_to_df(hourly: Dict[str, Any], rename: Dict[str, str]) -> pd.DataFram
     return df[ALL_COLUMNS].astype("float64")
 
 
+def _coord_key(lat: Optional[float] = None, lon: Optional[float] = None) -> tuple[float, float, str]:
+    la = round(float(lat if lat is not None else FARM_LAT), 4)
+    lo = round(float(lon if lon is not None else FARM_LON), 4)
+    return la, lo, f"{la:.4f}_{lo:.4f}"
+
+
 # ---------------------------------------------------------------------------
 # Archive (ERA5) – cache theo tháng
 # ---------------------------------------------------------------------------
-def _archive_cache_path(year: int, month: int) -> Path:
-    return WEATHER_DIR / f"archive_{year:04d}-{month:02d}.parquet"
+def _archive_cache_path(year: int, month: int, coord_tag: str = "") -> Path:
+    suffix = f"_{coord_tag}" if coord_tag else ""
+    return WEATHER_DIR / f"archive_{year:04d}-{month:02d}{suffix}.parquet"
 
 
-def _fetch_archive(start: date, end: date) -> pd.DataFrame:
+def _fetch_archive(start: date, end: date, lat: Optional[float] = None, lon: Optional[float] = None) -> pd.DataFrame:
+    la, lo, _ = _coord_key(lat, lon)
     params = {
-        "latitude": FARM_LAT,
-        "longitude": FARM_LON,
+        "latitude": la,
+        "longitude": lo,
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
         "hourly": ",".join(HOURLY_VARS + list(ARCHIVE_SOIL.keys())),
@@ -112,8 +120,12 @@ def _fetch_archive(start: date, end: date) -> pd.DataFrame:
         return _hourly_to_df(r.json().get("hourly", {}), ARCHIVE_SOIL)
 
 
-def get_archive_df(start: date, end: date) -> pd.DataFrame:
+def get_archive_df(start: date, end: date, lat: Optional[float] = None, lon: Optional[float] = None) -> pd.DataFrame:
     """ERA5 hourly cho [start, end] (cắt tại ngày hiện tại - ARCHIVE_DELAY_DAYS). Cache parquet theo tháng."""
+    la, lo, tag = _coord_key(lat, lon)
+    default_tag = f"{round(FARM_LAT, 4):.4f}_{round(FARM_LON, 4):.4f}"
+    coord_tag = "" if tag == default_tag else tag
+
     last_ok = _tz_today() - timedelta(days=ARCHIVE_DELAY_DAYS)
     end = min(end, last_ok)
     if start > end:
@@ -124,7 +136,7 @@ def get_archive_df(start: date, end: date) -> pd.DataFrame:
     while cur <= end:
         nxt = (pd.Timestamp(cur) + pd.offsets.MonthBegin(1)).date()
         m_start, m_end = cur, min(nxt - timedelta(days=1), last_ok)
-        path = _archive_cache_path(cur.year, cur.month)
+        path = _archive_cache_path(cur.year, cur.month, coord_tag)
         month_complete = (nxt - timedelta(days=1)) <= last_ok
         df_m: Optional[pd.DataFrame] = None
         if path.exists():
@@ -136,30 +148,32 @@ def get_archive_df(start: date, end: date) -> pd.DataFrame:
             except Exception:
                 df_m = None
         if df_m is None:
-            df_m = _fetch_archive(m_start, m_end)
+            df_m = _fetch_archive(m_start, m_end, la, lo)
             if not df_m.empty:
                 df_m.to_parquet(path)
         frames.append(df_m)
         cur = nxt
     df = pd.concat(frames).sort_index() if frames else pd.DataFrame(columns=ALL_COLUMNS)
     df = df[~df.index.duplicated(keep="last")]
-    lo = pd.Timestamp(start, tz=FARM_TZ)
-    hi = pd.Timestamp(end + timedelta(days=1), tz=FARM_TZ)
-    return df[(df.index >= lo) & (df.index < hi)]
+    lo_ts = pd.Timestamp(start, tz=FARM_TZ)
+    hi_ts = pd.Timestamp(end + timedelta(days=1), tz=FARM_TZ)
+    return df[(df.index >= lo_ts) & (df.index < hi_ts)]
 
 
 # ---------------------------------------------------------------------------
 # Forecast API (gần đây + tương lai) – cache trong bộ nhớ + file
 # ---------------------------------------------------------------------------
-def get_forecast_payload(force: bool = False) -> Dict[str, Any]:
+def get_forecast_payload(force: bool = False, lat: Optional[float] = None, lon: Optional[float] = None) -> Dict[str, Any]:
     """JSON gốc từ Forecast API: hourly (92 ngày trước + 16 ngày tới), daily, current."""
+    la, lo, tag = _coord_key(lat, lon)
     with _lock:
         now = time.time()
-        if not force and _forecast_cache["payload"] and now - _forecast_cache["at"] < WEATHER_FORECAST_TTL_SEC:
-            return _forecast_cache["payload"]
+        cached_entry = _forecast_cache.get(tag)
+        if not force and cached_entry and cached_entry.get("payload") and now - cached_entry.get("at", 0.0) < WEATHER_FORECAST_TTL_SEC:
+            return cached_entry["payload"]
         params = {
-            "latitude": FARM_LAT,
-            "longitude": FARM_LON,
+            "latitude": la,
+            "longitude": lo,
             "hourly": ",".join(HOURLY_VARS + list(FORECAST_SOIL.keys()) + ["precipitation_probability"]),
             "daily": ",".join(DAILY_VARS),
             "current": ",".join(CURRENT_VARS),
@@ -167,7 +181,8 @@ def get_forecast_payload(force: bool = False) -> Dict[str, Any]:
             "forecast_days": 16,
             "timezone": FARM_TZ,
         }
-        cache_file = WEATHER_DIR / "forecast_latest.json"
+        default_tag = f"{round(FARM_LAT, 4):.4f}_{round(FARM_LON, 4):.4f}"
+        cache_file = WEATHER_DIR / ("forecast_latest.json" if tag == default_tag else f"forecast_{tag}.json")
         try:
             with _client() as c:
                 r = c.get(FORECAST_URL, params=params)
@@ -176,20 +191,20 @@ def get_forecast_payload(force: bool = False) -> Dict[str, Any]:
             WEATHER_DIR.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps(payload), encoding="utf-8")
         except Exception as exc:  # mất mạng -> dùng bản cache gần nhất nếu có
-            if _forecast_cache["payload"]:
-                return _forecast_cache["payload"]
+            if cached_entry and cached_entry.get("payload"):
+                return cached_entry["payload"]
             if cache_file.exists():
                 payload = json.loads(cache_file.read_text(encoding="utf-8"))
                 payload["_stale"] = True
                 payload["_error"] = str(exc)
             else:
                 raise
-        _forecast_cache.update({"at": now, "payload": payload})
+        _forecast_cache[tag] = {"at": now, "payload": payload}
         return payload
 
 
-def get_forecast_df(force: bool = False) -> pd.DataFrame:
-    payload = get_forecast_payload(force=force)
+def get_forecast_df(force: bool = False, lat: Optional[float] = None, lon: Optional[float] = None) -> pd.DataFrame:
+    payload = get_forecast_payload(force=force, lat=lat, lon=lon)
     df = _hourly_to_df(payload.get("hourly", {}), FORECAST_SOIL)
     hp = payload.get("hourly", {}).get("precipitation_probability")
     if hp is not None and len(hp) == len(df):
@@ -200,7 +215,7 @@ def get_forecast_df(force: bool = False) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # API hợp nhất (dùng cho ML + Dashboard)
 # ---------------------------------------------------------------------------
-def get_weather_hourly_df(start: date, end: date) -> pd.DataFrame:
+def get_weather_hourly_df(start: date, end: date, lat: Optional[float] = None, lon: Optional[float] = None) -> pd.DataFrame:
     """Thời tiết hourly [start, end] (theo ngày địa phương). Ưu tiên ERA5 cho quá khứ xa,
     Forecast API (past_days/forecast_days) cho ~92 ngày gần đây và 16 ngày tới.
     Thêm cột `kind` ('archive' | 'forecast')."""
@@ -210,7 +225,7 @@ def get_weather_hourly_df(start: date, end: date) -> pd.DataFrame:
         end = end.date()
     parts: List[pd.DataFrame] = []
     try:
-        arch = get_archive_df(start, end)
+        arch = get_archive_df(start, end, lat=lat, lon=lon)
         if not arch.empty:
             arch = arch.copy()
             arch["kind"] = "archive"
@@ -218,7 +233,7 @@ def get_weather_hourly_df(start: date, end: date) -> pd.DataFrame:
     except Exception as exc:
         print(f"[Weather] Lỗi tải ERA5 archive: {exc}")
     try:
-        fc = get_forecast_df()
+        fc = get_forecast_df(lat=lat, lon=lon)
         lo = pd.Timestamp(start, tz=FARM_TZ)
         hi = pd.Timestamp(end + timedelta(days=1), tz=FARM_TZ)
         fc = fc[(fc.index >= lo) & (fc.index < hi)].copy()
@@ -253,10 +268,11 @@ def df_to_records(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return out
 
 
-def get_current() -> Dict[str, Any]:
-    payload = get_forecast_payload()
+def get_current(lat: Optional[float] = None, lon: Optional[float] = None) -> Dict[str, Any]:
+    la, lo, _ = _coord_key(lat, lon)
+    payload = get_forecast_payload(lat=la, lon=lo)
     return {
-        "location": {"lat": FARM_LAT, "lon": FARM_LON},
+        "location": {"lat": la, "lon": lo},
         "timezone": payload.get("timezone", FARM_TZ),
         "current": payload.get("current", {}),
         "current_units": payload.get("current_units", {}),
@@ -264,8 +280,8 @@ def get_current() -> Dict[str, Any]:
     }
 
 
-def get_daily_forecast(days: int = 16) -> List[Dict[str, Any]]:
-    payload = get_forecast_payload()
+def get_daily_forecast(days: int = 16, lat: Optional[float] = None, lon: Optional[float] = None) -> List[Dict[str, Any]]:
+    payload = get_forecast_payload(lat=lat, lon=lon)
     daily = payload.get("daily", {}) or {}
     times = daily.get("time", []) or []
     today = _tz_today().isoformat()
@@ -277,10 +293,10 @@ def get_daily_forecast(days: int = 16) -> List[Dict[str, Any]]:
     return rows[:days]
 
 
-def summarize_next_hours(hours: int = 24) -> Dict[str, Any]:
+def summarize_next_hours(hours: int = 24, lat: Optional[float] = None, lon: Optional[float] = None) -> Dict[str, Any]:
     """Tóm tắt thời tiết N giờ tới – dùng cho khuyến nghị tưới/bón phân."""
     try:
-        fc = get_forecast_df()
+        fc = get_forecast_df(lat=lat, lon=lon)
     except Exception as exc:
         return {"available": False, "error": str(exc)}
     now = pd.Timestamp.now(tz=FARM_TZ).floor("h")

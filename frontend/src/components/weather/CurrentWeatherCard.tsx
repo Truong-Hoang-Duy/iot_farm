@@ -1,7 +1,7 @@
-import { CloudRain, Cloud, Droplets, Gauge, MapPin, Sun, Thermometer, Wind, Sprout } from 'lucide-react';
+import { CloudRain, Droplets, Gauge, MapPin, Sun, Thermometer, Sprout, Waves } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { FARM_LOCATION, type WeatherResponse } from '@/services/backendAPI';
+import { getSelectedWeatherLocation, type WeatherResponse } from '@/services/backendAPI';
 import { ErrorState } from '@/components/forecast/StateViews';
 import { fmtDateTime, fmtNum } from '@/components/forecast/chartUtils';
 import { nearestRow, sumBetween, val, wmoDescription } from './weatherUtils';
@@ -42,8 +42,14 @@ export function CurrentWeatherCard({ data, isLoading, error, onRetry, className 
   const rain24 = sumBetween(hourly, 'precipitation', now, now + 24 * 3600_000);
   const et024 = sumBetween(hourly, 'et0_fao_evapotranspiration', now, now + 24 * 3600_000);
   const obsTs = data?.current?.ts ?? near?.ts;
-  const lat = data?.location?.lat ?? FARM_LOCATION.lat;
-  const lon = data?.location?.lon ?? FARM_LOCATION.lon;
+  const selLoc = getSelectedWeatherLocation();
+  const lat = data?.location?.lat ?? selLoc.lat;
+  const lon = data?.location?.lon ?? selLoc.lon;
+  const locName = data?.location?.name ?? selLoc.name;
+  const rainTotal24 = data?.next24h?.precip_total_mm ?? (rain24.n ? rain24.sum : undefined);
+  const et0Total24 = data?.next24h?.et0_total_mm ?? (et024.n ? et024.sum : pick('et0_fao_evapotranspiration'));
+  const waterBalance24 =
+    rainTotal24 !== undefined && et0Total24 !== undefined ? rainTotal24 - et0Total24 : pick('water_balance_24h');
 
   return (
     <div className={cn('rounded-2xl border border-border bg-card p-4 sm:p-6', className)}>
@@ -62,8 +68,12 @@ export function CurrentWeatherCard({ data, isLoading, error, onRetry, className 
       ) : (
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
           <div className="lg:w-64 shrink-0 space-y-1">
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
-              <MapPin className="h-3 w-3" /> {fmtNum(lat, 4)}, {fmtNum(lon, 4)} · Open-Meteo
+            <p className="text-xs text-muted-foreground flex items-center gap-1" title={`${locName} (${fmtNum(lat, 4)}, ${fmtNum(lon, 4)})`}>
+              <MapPin className="h-3 w-3 shrink-0 text-primary" />
+              <span className="truncate font-medium text-foreground">{locName}</span>
+            </p>
+            <p className="text-[11px] text-muted-foreground font-mono">
+              ({fmtNum(lat, 4)}°N, {fmtNum(lon, 4)}°E) · Open-Meteo IFS + ERA5-Land
             </p>
             <div className="flex items-center gap-3">
               <span className="text-5xl">{wmo.emoji}</span>
@@ -85,29 +95,50 @@ export function CurrentWeatherCard({ data, isLoading, error, onRetry, className 
             )}
           </div>
           <div className="grid flex-1 grid-cols-2 sm:grid-cols-4 gap-2">
-            <Stat icon={Droplets} label="Độ ẩm KK" value={pick('relative_humidity_2m')} unit="%" color="bg-water/15 text-water" />
-            <Stat icon={CloudRain} label="Mưa (giờ này)" value={pick('precipitation')} unit="mm" color="bg-blue-500/15 text-blue-600" />
-            <Stat icon={Cloud} label="Mây che phủ" value={pick('cloud_cover')} unit="%" color="bg-slate-500/15 text-slate-600" />
-            <Stat icon={Wind} label="Gió 10m" value={pick('wind_speed_10m')} unit="km/h" color="bg-teal-500/15 text-teal-600" />
-            <Stat icon={Sun} label="Bức xạ" value={pick('shortwave_radiation')} unit="W/m²" color="bg-warning/15 text-warning" />
-            <Stat icon={Gauge} label="VPD" value={pick('vapour_pressure_deficit')} unit="kPa" color="bg-purple-500/15 text-purple-600" />
+            <Stat icon={Droplets} label="Độ ẩm KK (2m)" value={pick('relative_humidity_2m')} unit="%" color="bg-water/15 text-water" />
+            <Stat icon={Gauge} label="Áp suất hơi thiếu hụt (VPD)" value={pick('vapour_pressure_deficit')} unit="kPa" color="bg-purple-500/15 text-purple-600" />
+            <Stat icon={Sun} label="Bức xạ mặt trời" value={pick('shortwave_radiation')} unit="W/m²" color="bg-warning/15 text-warning" />
+            <Stat
+              icon={Sprout}
+              label="Bốc thoát hơi ET0 (24h)"
+              value={et0Total24}
+              unit="mm"
+              color="bg-success/15 text-success"
+            />
             <Stat
               icon={CloudRain}
-              label="Mưa 24h tới"
-              value={data?.next24h?.precip_total_mm ?? (rain24.n ? rain24.sum : undefined)}
+              label="Tổng mưa 24h tới"
+              value={rainTotal24}
               unit="mm"
               color="bg-blue-500/15 text-blue-600"
             />
             <Stat
-              icon={Sprout}
-              label="ET0 24h tới"
-              value={data?.next24h?.et0_total_mm ?? (et024.n ? et024.sum : pick('et0_fao_evapotranspiration'))}
+              icon={Waves}
+              label="Cân bằng nước 24h (P−ET0)"
+              value={waterBalance24}
               unit="mm"
-              color="bg-success/15 text-success"
+              color="bg-cyan-500/15 text-cyan-600"
             />
-            {(pick('soil_temperature') ?? pick('soil_temperature_0cm')) !== undefined && (
-              <Stat icon={Thermometer} label="Nhiệt độ đất" value={pick('soil_temperature') ?? pick('soil_temperature_0cm')} unit="°C" color="bg-soil/15 text-soil" />
-            )}
+            <Stat
+              icon={Thermometer}
+              label="Nhiệt độ đất (ERA5)"
+              value={pick('soil_temperature') ?? pick('soil_temperature_0cm')}
+              unit="°C"
+              color="bg-soil/15 text-soil"
+            />
+            <Stat
+              icon={Droplets}
+              label="Ẩm đất tầng rễ (ERA5)"
+              value={
+                pick('soil_moisture') !== undefined
+                  ? (pick('soil_moisture') as number) <= 1
+                    ? (pick('soil_moisture') as number) * 100
+                    : pick('soil_moisture')
+                  : undefined
+              }
+              unit="%"
+              color="bg-emerald-500/15 text-emerald-600"
+            />
           </div>
         </div>
       )}

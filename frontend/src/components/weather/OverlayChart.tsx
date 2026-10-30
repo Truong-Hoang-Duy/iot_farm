@@ -10,10 +10,12 @@ import {
   WEATHER_VARS,
   WEATHER_VAR_INFO,
   backendAPI,
+  getSelectedWeatherLocation,
   queryKeys,
   shouldRetry,
   vnDateString,
   vnIsoString,
+  type FarmLocationConfig,
 } from '@/services/backendAPI';
 import { ChartSkeleton, EmptyState, ErrorState } from '@/components/forecast/StateViews';
 import { axisProps, fmtDateTime, fmtNum, makeTimeTick, tooltipContentStyle } from '@/components/forecast/chartUtils';
@@ -23,10 +25,12 @@ const RANGES = [3, 7, 14, 30];
 const HOUR = 3600_000;
 
 /** Biểu đồ chồng: 1 biến thời tiết + 1 biến cảm biến (gộp theo giờ), 2 trục Y. */
-export function OverlayChart({ className }: { className?: string }) {
+export function OverlayChart({ className, location }: { className?: string; location?: FarmLocationConfig }) {
   const [wVar, setWVar] = useState<string>('temperature_2m');
   const [sVar, setSVar] = useState<string>('moisture');
   const [days, setDays] = useState(7);
+  const loc = location ?? getSelectedWeatherLocation();
+  const coordKey = `${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`;
 
   // Làm tròn mốc thời gian theo giờ để queryKey ổn định
   const endMs = Math.ceil(Date.now() / HOUR) * HOUR;
@@ -37,8 +41,8 @@ export function OverlayChart({ className }: { className?: string }) {
   const endIso = vnIsoString(endMs);
 
   const weatherQ = useQuery({
-    queryKey: queryKeys.weatherHistory(startDate, endDate),
-    queryFn: ({ signal }) => backendAPI.getWeatherHistory({ start: startDate, end: endDate }, signal),
+    queryKey: [...queryKeys.weatherHistory(startDate, endDate), coordKey],
+    queryFn: ({ signal }) => backendAPI.getWeatherHistory({ start: startDate, end: endDate }, signal, loc),
     staleTime: 10 * 60_000,
     retry: shouldRetry,
   });
@@ -79,7 +83,7 @@ export function OverlayChart({ className }: { className?: string }) {
 
   const wInfo = WEATHER_VAR_INFO[wVar];
   const sInfo = TARGET_MAP[sVar];
-  const isBar = wVar === 'precipitation' || wVar === 'rain';
+  const isBar = wVar === 'precipitation' || wVar === 'rain' || wVar === 'precipitation_24h' || wVar === 'precipitation_72h';
   const tick = useMemo(() => makeTimeTick(days * 86400_000), [days]);
   const hasW = rows.some((r) => r.w !== undefined);
   const hasS = rows.some((r) => r.s !== undefined);
