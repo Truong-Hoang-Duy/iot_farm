@@ -211,7 +211,7 @@ function BackendStatusDisplay({
         <div>
           <h2 className="font-display text-lg sm:text-xl font-bold flex items-center gap-2">
             <ArrowLeftRight className="h-5 w-5 text-primary" />
-            Trạng thái đồng bộ hệ thống (Backend & Dữ liệu)
+            Trạng thái đồng bộ hệ thống (Backend &amp; dữ liệu)
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Giám sát dịch vụ đồng bộ 2 chiều giữa Firebase Realtime Database và hệ thống lưu trữ

@@ -102,7 +102,7 @@ export default function Login() {
                 <span className="text-white">Quản lý</span>
                 <br />
                 <span className="bg-gradient-to-r from-emerald-300 via-green-300 to-teal-300 bg-clip-text text-transparent">
-                  Tưới tiêu thông minh
+                  tưới tiêu thông minh
                 </span>
               </h1>
               <p className="text-lg text-white/70 max-w-md leading-relaxed">

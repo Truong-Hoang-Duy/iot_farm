@@ -49,3 +49,5 @@ backend/.env
 *.njsproj
 *.sln
 *.sw?
+
+report

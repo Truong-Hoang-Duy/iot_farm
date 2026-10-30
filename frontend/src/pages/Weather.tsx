@@ -182,7 +182,7 @@ export default function Weather() {
           <div>
             <h1 className="font-display text-3xl font-bold flex items-center gap-3">
               <CloudSun className="h-8 w-8 text-primary" />
-              Thời tiết &amp; Khí tượng Nông nghiệp
+              Thời tiết &amp; khí tượng nông nghiệp
             </h1>
             <p className="text-muted-foreground mt-1">
               Theo dõi thời tiết thực tế, cân bằng nước tưới và dự báo dài hạn tại đúng tọa độ vùng trồng
@@ -307,7 +307,7 @@ export default function Weather() {
 
           <TabsContent value="history" className="mt-0">
             <p className="text-xs text-muted-foreground mb-3">
-              {fmtDate(range.from.getTime())} → {fmtDate(range.to.getTime())} · dữ liệu lưu trữ ERA5 (bù bằng dự báo cho vài ngày gần nhất)
+              {fmtDate(range.from.getTime())} → {fmtDate(range.to.getTime())} · Dữ liệu khí tượng lịch sử tại tọa độ vùng trồng (tự động đồng bộ đến ngày hiện tại)
             </p>
             {historyQ.isLoading ? (
               <ChartSkeleton className="h-72" />

@@ -93,13 +93,18 @@ export function OverlayChart({ className, location }: { className?: string; loca
   return (
     <div className={cn('rounded-2xl border border-border bg-card p-4 sm:p-6 space-y-4', className)}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <h2 className="font-display text-lg sm:text-xl font-semibold flex items-center gap-2">
-          <Layers className="h-5 w-5 text-primary" />
-          So sánh thời tiết ↔ cảm biến
-        </h2>
+        <div>
+          <h2 className="font-display text-lg sm:text-xl font-semibold flex items-center gap-2">
+            <Layers className="h-5 w-5 text-primary" />
+            Đối chiếu Thời tiết Ngoại sinh &amp; Phản ứng Cảm biến Vườn Ớt
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Quan sát trực tiếp độ trễ truyền nhiệt và phản ứng độ ẩm/dinh dưỡng vùng rễ ớt theo diễn biến khí tượng
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={wVar} onValueChange={setWVar}>
-            <SelectTrigger className="h-8 w-[200px] text-xs">
+            <SelectTrigger className="h-8 w-[240px] text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -110,9 +115,9 @@ export function OverlayChart({ className, location }: { className?: string; loca
               ))}
             </SelectContent>
           </Select>
-          <span className="text-xs text-muted-foreground">vs</span>
+          <span className="text-xs text-muted-foreground">đối chiếu</span>
           <Select value={sVar} onValueChange={setSVar}>
-            <SelectTrigger className="h-8 w-[170px] text-xs">
+            <SelectTrigger className="h-8 w-[190px] text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -175,8 +180,8 @@ export function OverlayChart({ className, location }: { className?: string; loca
                 labelFormatter={(l: number) => fmtDateTime(l)}
                 formatter={(v: number, name: string) =>
                   name === 'w'
-                    ? [`${fmtNum(v, (wInfo?.digits ?? 1) + 1)} ${wInfo?.unit ?? ''}`, `${wInfo?.label ?? wVar} (Open-Meteo)`]
-                    : [`${fmtNum(v, (sInfo?.digits ?? 1) + 1)} ${sInfo?.unit ?? ''}`, `${sInfo?.label ?? sVar} (cảm biến)`]
+                    ? [`${fmtNum(v, (wInfo?.digits ?? 1) + 1)} ${wInfo?.unit ?? ''}`, `${wInfo?.label ?? wVar} (Khí tượng)`]
+                    : [`${fmtNum(v, (sInfo?.digits ?? 1) + 1)} ${sInfo?.unit ?? ''}`, `${sInfo?.label ?? sVar} (Cảm biến đã xử lý)`]
                 }
               />
               <Legend
@@ -194,7 +199,7 @@ export function OverlayChart({ className, location }: { className?: string; loca
         )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        <span>Dữ liệu cảm biến: InfluxDB (gộp trung bình theo giờ). Thời tiết: Open-Meteo hourly tại vị trí trang trại.</span>
+        <span>Dữ liệu cảm biến: Đã qua tiền xử lý làm sạch tại Backend (gộp trung bình theo giờ). Dữ liệu khí tượng: Quan trắc &amp; dự báo theo giờ tại đúng tọa độ vườn ớt.</span>
         {weatherQ.isError && !bothError && <span className="text-warning">Không tải được dữ liệu thời tiết.</span>}
         {sensorQ.isError && !bothError && <span className="text-warning">Không tải được dữ liệu cảm biến.</span>}
       </div>

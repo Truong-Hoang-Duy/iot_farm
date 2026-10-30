@@ -20,30 +20,41 @@ export function generateInsights(near: WeatherHourly[], corr?: CorrelationRespon
 
   const hasFuture = near.some((r) => r.ts > now);
   if (!hasFuture && next24h) {
-    // Không có chuỗi giờ tương lai → dùng tóm tắt 24h từ /weather/current
     const rain = next24h.precip_total_mm;
     if (rain !== undefined && rain >= 1) {
       out.push({
         icon: CloudRain,
         tone: 'info',
-        title: rain >= 5 ? 'Mưa đáng kể trong 24h tới → giảm tưới' : 'Mưa nhẹ trong 24h tới',
-        text: `Dự báo ${fmtNum(rain, 1)} mm${next24h.precip_prob_max !== undefined ? ` (xác suất tối đa ${fmtNum(next24h.precip_prob_max, 0)}%)` : ''}. ${
-          rain >= 5 ? 'Nên tạm hoãn hoặc giảm lượng tưới.' : 'Có thể giảm 30–50% lượng tưới.'
+        title: rain >= 5 ? 'Dự báo mưa đáng kể trong 24 giờ tới → Tạm ngưng tưới chống ngập úng rễ ớt' : 'Dự báo mưa nhẹ trong 24 giờ tới',
+        text: `Tổng lượng mưa dự kiến ${fmtNum(rain, 1)} mm${next24h.precip_prob_max !== undefined ? ` (xác suất mưa tối đa ${fmtNum(next24h.precip_prob_max, 0)}%)` : ''}. ${
+          rain >= 5
+            ? 'Nên tạm hoãn tưới nhỏ giọt để tránh ngạt oxy bộ rễ chùm 0–30 cm của cây ớt và kiểm tra pH đất sau mưa.'
+            : 'Có thể giảm 30–50% lượng nước tưới định kỳ.'
         }`,
       });
     } else if (rain !== undefined && next24h.et0_total_mm !== undefined && next24h.et0_total_mm >= 4) {
       out.push({
         icon: Droplets,
         tone: 'warn',
-        title: 'Không mưa & bốc hơi cao → tăng tưới',
-        text: `ET0 24h tới ≈ ${fmtNum(next24h.et0_total_mm, 1)} mm – tưới bù theo ET0 × Kc.`,
+        title: 'Không mưa & lượng bốc thoát hơi nước cao → Tưới bù ẩm bảo vệ hoa ớt',
+        text: `Lượng bốc thoát hơi nước 24 giờ tới khoảng ${fmtNum(next24h.et0_total_mm, 1)} mm – cần tưới bù đủ ẩm (duy trì độ ẩm đất 60%–75%) để chống khô héo cuống hoa ở nách chảng ba.`,
       });
     }
-    if (next24h.temp_max !== undefined && next24h.temp_max >= 35) {
-      out.push({ icon: Flame, tone: 'alert', title: 'Nắng nóng', text: `Nhiệt độ cao nhất 24h tới ≈ ${fmtNum(next24h.temp_max, 1)} °C – tưới sáng sớm/chiều mát.` });
+    if (next24h.temp_max !== undefined && next24h.temp_max >= 34) {
+      out.push({
+        icon: Flame,
+        tone: 'alert',
+        title: 'Cảnh báo nắng nóng → Tưới mát đón đầu vào sáng sớm (06:30)',
+        text: `Nhiệt độ không khí cao nhất 24 giờ tới đạt khoảng ${fmtNum(next24h.temp_max, 1)} °C (sóng nhiệt sẽ truyền xuống tầng rễ ớt sau 6 giờ) – nên tưới làm mát từ 06:30 sáng để bảo vệ sức sống hạt phấn hoa.`,
+      });
     }
-    if (next24h.rh_mean !== undefined && next24h.rh_mean >= 88) {
-      out.push({ icon: ShieldAlert, tone: 'warn', title: 'Độ ẩm không khí cao', text: `Độ ẩm TB 24h tới ≈ ${fmtNum(next24h.rh_mean, 0)}% – nguy cơ nấm bệnh tăng.` });
+    if (next24h.rh_mean !== undefined && next24h.rh_mean >= 85) {
+      out.push({
+        icon: ShieldAlert,
+        tone: 'warn',
+        title: 'Độ ẩm không khí cao → Cảnh báo bệnh thán thư quả ớt',
+        text: `Độ ẩm không khí trung bình 24 giờ tới khoảng ${fmtNum(next24h.rh_mean, 0)}% – nguy cơ nấm thán thư và héo rũ tăng cao, hạn chế tưới phun mưa lên tán lá.`,
+      });
     }
   }
 
@@ -59,15 +70,15 @@ export function generateInsights(near: WeatherHourly[], corr?: CorrelationRespon
         out.push({
           icon: CloudRain,
           tone: 'info',
-          title: 'Mưa đáng kể trong 24h tới → giảm tưới',
-          text: `Dự báo tổng lượng mưa ${fmtNum(r24.sum, 1)} mm trong 24 giờ tới. Nên tạm hoãn hoặc giảm lượng tưới để tránh úng rễ.`,
+          title: 'Dự báo mưa đáng kể trong 24 giờ tới → Tạm ngưng tưới chống ngập úng rễ ớt',
+          text: `Dự báo tổng lượng mưa ${fmtNum(r24.sum, 1)} mm trong 24 giờ tới. Nên tạm ngưng bơm tưới để tránh ngạt oxy bộ rễ chùm 0–30 cm và kiểm tra độ pH đất sau mưa (bón vôi & phun Canxi – Bo nếu pH < 5.8).`,
         });
       } else if (r24.sum >= 1) {
         out.push({
           icon: CloudRain,
           tone: 'info',
-          title: 'Mưa nhẹ trong 24h tới',
-          text: `Khoảng ${fmtNum(r24.sum, 1)} mm – có thể giảm khoảng 30–50% lượng tưới và theo dõi độ ẩm đất.`,
+          title: 'Dự báo mưa nhẹ trong 24 giờ tới',
+          text: `Khoảng ${fmtNum(r24.sum, 1)} mm – có thể giảm khoảng 30–50% lượng nước tưới và theo dõi độ ẩm thể tích đất vùng rễ.`,
         });
       }
     }
@@ -75,8 +86,8 @@ export function generateInsights(near: WeatherHourly[], corr?: CorrelationRespon
       out.push({
         icon: CloudRain,
         tone: 'info',
-        title: 'Mưa trong khoảng 24–48h tới',
-        text: `Dự báo ${fmtNum(r48.sum, 1)} mm vào ngày mai đến ngày kia – lên kế hoạch giảm tưới, hoãn bón phân để tránh rửa trôi.`,
+        title: 'Dự báo mưa lớn trong 24–48 giờ tới → Hoãn bón phân gốc NPK',
+        text: `Dự báo ${fmtNum(r48.sum, 1)} mm vào ngày mai đến ngày kia – nên tạm hoãn bón thúc Đạm, Lân, Kali vào gốc để tránh rửa trôi dinh dưỡng qua tầng đất 0–30 cm.`,
       });
     }
     if (r24.n && r48.n && r24.sum + r48.sum < 1) {
@@ -84,27 +95,27 @@ export function generateInsights(near: WeatherHourly[], corr?: CorrelationRespon
       out.push({
         icon: Droplets,
         tone: et !== undefined && et >= 4 ? 'warn' : 'good',
-        title: et !== undefined && et >= 4 ? 'Không mưa 48h & bốc hơi cao → tăng tưới' : 'Không có mưa trong 48h tới',
+        title: et !== undefined && et >= 4 ? 'Không mưa 48 giờ & bốc thoát hơi nước cao → Tăng tưới bù ẩm cho cây ớt' : 'Thời tiết khô ráo trong 48 giờ tới',
         text:
           et !== undefined
-            ? `ET0 24h tới ≈ ${fmtNum(et, 1)} mm. ${et >= 4 ? 'Cây mất nước nhanh, nên tưới bù đủ lượng ET0 × hệ số cây trồng (Kc).' : 'Duy trì lịch tưới bình thường.'}`
-            : 'Duy trì lịch tưới theo độ ẩm đất.',
+            ? `Lượng bốc thoát hơi nước 24 giờ tới khoảng ${fmtNum(et, 1)} mm. ${et >= 4 ? 'Cây ớt thoát hơi nước mạnh, cần tưới bù đủ ẩm vào 06:30 sáng và 16:30 chiều để giữ ẩm độ đất 60%–75%, chống rụng hoa chảng ba.' : 'Duy trì lịch tưới nhỏ giọt định kỳ.'}`
+            : 'Duy trì lịch tưới theo độ ẩm thể tích đất vùng rễ.',
       });
     }
-    if (t24 && t24.max >= 35) {
+    if (t24 && t24.max >= 34) {
       out.push({
         icon: Flame,
         tone: 'alert',
-        title: 'Nắng nóng',
-        text: `Nhiệt độ cao nhất 24h tới khoảng ${fmtNum(t24.max, 1)} °C – nên tưới vào sáng sớm/chiều mát, cân nhắc che lưới.`,
+        title: 'Cảnh báo nắng nóng → Tưới mát đón đầu vào sáng sớm (06:30)',
+        text: `Nhiệt độ không khí cao nhất 24 giờ tới khoảng ${fmtNum(t24.max, 1)} °C (sóng nhiệt sẽ truyền xuống tầng rễ ớt sau 6 giờ) – cần tưới mát đón đầu từ sáng sớm và phòng trừ bọ trĩ, nhện trắng.`,
       });
     }
-    if (rh24 && rh24.mean >= 88) {
+    if (rh24 && rh24.mean >= 85) {
       out.push({
         icon: ShieldAlert,
         tone: 'warn',
-        title: 'Độ ẩm không khí cao',
-        text: `Độ ẩm trung bình 24h tới ≈ ${fmtNum(rh24.mean, 0)}% – nguy cơ nấm bệnh tăng, hạn chế tưới phun lên lá.`,
+        title: 'Độ ẩm không khí cao → Cảnh báo bệnh thán thư quả ớt',
+        text: `Độ ẩm không khí trung bình 24 giờ tới khoảng ${fmtNum(rh24.mean, 0)}% – nguy cơ nấm thán thư và héo rũ tăng cao, hạn chế tưới phun lên lá.`,
       });
     }
   }

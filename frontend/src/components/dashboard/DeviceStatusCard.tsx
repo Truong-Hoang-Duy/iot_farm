@@ -356,16 +356,6 @@ export function DeviceStatusCard({ deviceId, className, liveState }: DeviceStatu
           </div>
         </div>
       )}
-
-      {status.last_error && (
-        <div className="mt-4 flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm">
-          <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-          <div className="min-w-0">
-            <p className="font-medium text-destructive">Lỗi gần nhất</p>
-            <p className="text-muted-foreground break-words">{status.last_error}</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

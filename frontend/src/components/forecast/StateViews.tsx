@@ -36,7 +36,7 @@ export function ErrorState({ error, onRetry, className, showTrainLink = true }: 
         )}
         {showTrainLink && kind === 'not_trained' && (
           <Button size="sm" asChild className="h-8">
-            <Link to="/models">Tới Phòng thí nghiệm</Link>
+            <Link to="/model-lab">Tới phòng thí nghiệm</Link>
           </Button>
         )}
       </div>

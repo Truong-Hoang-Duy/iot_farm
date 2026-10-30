@@ -84,7 +84,7 @@ export function TestPredictionsChart({ defaultTarget = 'moisture' }: { defaultTa
         <div>
           <h2 className="font-display text-lg sm:text-xl font-semibold flex items-center gap-2">
             <FlaskConical className="h-5 w-5 text-primary" />
-            Dự báo vs Thực tế trên tập test
+            Dự báo vs thực tế trên tập test
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
             Dữ liệu test (20% cuối) – mô hình không nhìn thấy khi huấn luyện · hiển thị {lastDays} ngày cuối

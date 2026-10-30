@@ -27,10 +27,13 @@ interface WeatherChartsProps {
   className?: string;
 }
 
-function ChartBox({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+function ChartBox({ title, subtitle, children, className }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
   return (
     <div className={cn('rounded-xl border border-border p-3', className)}>
-      <h4 className="text-sm font-medium mb-2">{title}</h4>
+      <div className="mb-2">
+        <h4 className="text-sm font-medium">{title}</h4>
+        {subtitle && <p className="text-[11px] text-muted-foreground">{subtitle}</p>}
+      </div>
       <div className="h-56">{children}</div>
     </div>
   );
@@ -73,9 +76,14 @@ export function WeatherCharts({ hourly, nowTs, dailyThresholdDays = 10, classNam
   return (
     <div className={cn('grid gap-4 lg:grid-cols-2', className)}>
       {daily && (
-        <p className="lg:col-span-2 text-xs text-muted-foreground -mb-2">Khoảng dài → dữ liệu được gộp theo ngày (mưa, ET0: tổng ngày; còn lại: trung bình).</p>
+        <p className="lg:col-span-2 text-xs text-muted-foreground -mb-2">
+          Khoảng thời gian dài: Dữ liệu tự động tổng hợp theo ngày (Lượng mưa và Bốc thoát hơi nước tính tổng ngày; các chỉ số khác tính trung bình ngày).
+        </p>
       )}
-      <ChartBox title="Nhiệt độ & độ ẩm không khí" className="lg:col-span-2">
+      <ChartBox
+        title="Nhiệt độ & Độ ẩm tương đối không khí"
+        subtitle="Vi khí hậu tán lá ớt (ngưỡng thụ phấn tối ưu: 22–28 °C, độ ẩm < 85%)"
+      >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 5, right: 0, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -97,25 +105,40 @@ export function WeatherCharts({ hourly, nowTs, dailyThresholdDays = 10, classNam
         </ResponsiveContainer>
       </ChartBox>
 
-      <ChartBox title={daily ? 'Lượng mưa (tổng ngày) & mây' : 'Lượng mưa & mây che phủ'}>
+      <ChartBox
+        title={daily ? 'Tổng lượng mưa theo ngày & Cân bằng nước' : 'Lượng mưa theo giờ & Tổng mưa tích lũy 24 giờ'}
+        subtitle="Giám sát nguy cơ ngập úng bộ rễ chùm 0–30 cm và rửa trôi phân bón NPK"
+      >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 5, right: 0, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             {xAxis}
-            <YAxis yAxisId="l" width={40} {...axisProps} />
-            <YAxis yAxisId="r" orientation="right" domain={[0, 100]} width={35} {...axisProps} unit="%" />
+            <YAxis yAxisId="l" width={40} {...axisProps} unit=" mm" />
+            <YAxis yAxisId="r" orientation="right" width={40} {...axisProps} unit=" mm" />
             <Tooltip contentStyle={tooltipContentStyle} labelFormatter={labelFmt} formatter={fmt} />
             <Legend wrapperStyle={{ fontSize: '11px' }} formatter={legendFmt} />
-            {has('cloud_cover') && (
-              <Area yAxisId="r" type="monotone" dataKey="cloud_cover" stroke="none" fill={info('cloud_cover').color} fillOpacity={0.15} isAnimationActive={false} />
-            )}
             <Bar yAxisId="l" dataKey="precipitation" fill={info('precipitation').color} radius={[2, 2, 0, 0]} maxBarSize={18} isAnimationActive={false} />
+            {has('precipitation_24h') && (
+              <Line
+                yAxisId="r"
+                type="monotone"
+                dataKey="precipitation_24h"
+                stroke={info('precipitation_24h').color}
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+                connectNulls
+              />
+            )}
             {nowLine}
           </ComposedChart>
         </ResponsiveContainer>
       </ChartBox>
 
-      <ChartBox title={daily ? 'Bức xạ (TB ngày) & ET0 (tổng ngày)' : 'Bức xạ mặt trời & bốc thoát hơi ET0'}>
+      <ChartBox
+        title={daily ? 'Bức xạ mặt trời (TB ngày) & Bốc thoát hơi nước (tổng ngày)' : 'Bức xạ mặt trời & Lượng bốc thoát hơi nước tham chiếu'}
+        subtitle="Động lực truyền nhiệt mặt luống và định lượng lượng nước tưới bù cho cây ớt"
+      >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={rows} margin={{ top: 5, right: 0, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -144,6 +167,45 @@ export function WeatherCharts({ hourly, nowTs, dailyThresholdDays = 10, classNam
               isAnimationActive={false}
               connectNulls
             />
+            {nowLine}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </ChartBox>
+
+      <ChartBox
+        title="Độ thiếu hụt áp suất hơi nước & Cân bằng nước 24 giờ"
+        subtitle="Chỉ số cảnh báo khô héo cuống hoa chảng ba và thâm hụt ẩm vùng rễ ớt"
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={rows} margin={{ top: 5, right: 0, left: -10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            {xAxis}
+            <YAxis yAxisId="l" width={40} {...axisProps} />
+            <YAxis yAxisId="r" orientation="right" width={40} {...axisProps} unit=" mm" />
+            <Tooltip contentStyle={tooltipContentStyle} labelFormatter={labelFmt} formatter={fmt} />
+            <Legend wrapperStyle={{ fontSize: '11px' }} formatter={legendFmt} />
+            <Line
+              yAxisId="l"
+              type="monotone"
+              dataKey="vapour_pressure_deficit"
+              stroke={info('vapour_pressure_deficit').color}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls
+            />
+            {has('water_balance_24h') && (
+              <Area
+                yAxisId="r"
+                type="monotone"
+                dataKey="water_balance_24h"
+                stroke={info('water_balance_24h').color}
+                fill={info('water_balance_24h').color}
+                fillOpacity={0.18}
+                isAnimationActive={false}
+                connectNulls
+              />
+            )}
             {nowLine}
           </ComposedChart>
         </ResponsiveContainer>
@@ -179,7 +241,7 @@ export function DailyStrip({ hourly, daily }: { hourly: WeatherHourly[]; daily?:
             <div className={cn('tabular-nums', rain !== undefined && rain >= 1 ? 'text-blue-600 font-medium' : 'text-muted-foreground')}>
               🌧 {fmtNum(rain, 1)} mm{prob !== undefined ? ` · ${fmtNum(prob, 0)}%` : ''}
             </div>
-            <div className="text-muted-foreground tabular-nums">ET0 {fmtNum(et0, 1)}</div>
+            <div className="text-muted-foreground tabular-nums">Bốc hơi: {fmtNum(et0, 1)} mm</div>
           </div>
         );
       })}

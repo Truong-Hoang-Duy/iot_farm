@@ -21,15 +21,15 @@ export interface TargetDef {
 }
 
 export const TARGETS: TargetDef[] = [
-  { key: 'temperature', label: 'Nhiệt độ KK', unit: '°C', color: 'hsl(0, 70%, 55%)', digits: 1 },
-  { key: 'humidity', label: 'Độ ẩm KK', unit: '%', color: 'hsl(220, 70%, 55%)', digits: 1 },
-  { key: 'soiltemp', label: 'Nhiệt độ đất', unit: '°C', color: 'hsl(38, 92%, 50%)', digits: 1 },
-  { key: 'moisture', label: 'Độ ẩm đất', unit: '%', color: 'hsl(200, 85%, 55%)', digits: 1 },
-  { key: 'pH', label: 'pH', unit: '', color: 'hsl(195, 85%, 40%)', digits: 2 },
-  { key: 'EC', label: 'EC', unit: 'mS/cm', color: 'hsl(30, 60%, 45%)', digits: 2 },
-  { key: 'N', label: 'Đạm (N)', unit: 'mg/kg', color: 'hsl(280, 70%, 55%)', digits: 0 },
-  { key: 'P', label: 'Lân (P)', unit: 'mg/kg', color: 'hsl(152, 76%, 40%)', digits: 0 },
-  { key: 'K', label: 'Kali (K)', unit: 'mg/kg', color: 'hsl(330, 70%, 55%)', digits: 0 },
+  { key: 'temperature', label: 'Nhiệt độ không khí', unit: '°C', color: 'hsl(0, 70%, 55%)', digits: 1 },
+  { key: 'humidity', label: 'Độ ẩm không khí', unit: '%', color: 'hsl(220, 70%, 55%)', digits: 1 },
+  { key: 'soiltemp', label: 'Nhiệt độ đất vùng rễ', unit: '°C', color: 'hsl(38, 92%, 50%)', digits: 1 },
+  { key: 'moisture', label: 'Độ ẩm thể tích đất', unit: '%', color: 'hsl(200, 85%, 55%)', digits: 1 },
+  { key: 'pH', label: 'Độ pH đất', unit: '', color: 'hsl(195, 85%, 40%)', digits: 2 },
+  { key: 'EC', label: 'Độ dẫn điện (EC)', unit: 'mS/cm', color: 'hsl(30, 60%, 45%)', digits: 2 },
+  { key: 'N', label: 'Đạm dễ tiêu (N)', unit: 'mg/kg', color: 'hsl(280, 70%, 55%)', digits: 0 },
+  { key: 'P', label: 'Lân hữu dụng (P)', unit: 'mg/kg', color: 'hsl(152, 76%, 40%)', digits: 0 },
+  { key: 'K', label: 'Kali trao đổi (K)', unit: 'mg/kg', color: 'hsl(330, 70%, 55%)', digits: 0 },
 ];
 
 export const TARGET_MAP: Record<string, TargetDef> = Object.fromEntries(TARGETS.map((t) => [t.key, t]));
@@ -935,25 +935,25 @@ export const WEATHER_VARS = [
 export type WeatherVar = (typeof WEATHER_VARS)[number];
 
 export const WEATHER_VAR_INFO: Record<string, { label: string; unit: string; color: string; digits: number }> = {
-  temperature_2m: { label: 'Nhiệt độ KK chuẩn 2m', unit: '°C', color: 'hsl(0, 75%, 55%)', digits: 1 },
-  relative_humidity_2m: { label: 'Độ ẩm KK chuẩn 2m', unit: '%', color: 'hsl(215, 75%, 55%)', digits: 0 },
-  vapour_pressure_deficit: { label: 'Thâm hụt áp suất hơi VPD', unit: 'kPa', color: 'hsl(300, 50%, 50%)', digits: 2 },
-  shortwave_radiation: { label: 'Bức xạ mặt trời sóng ngắn', unit: 'W/m²', color: 'hsl(42, 95%, 50%)', digits: 0 },
-  et0_fao_evapotranspiration: { label: 'Bốc thoát hơi chuẩn FAO ET0', unit: 'mm', color: 'hsl(150, 60%, 40%)', digits: 2 },
-  precipitation: { label: 'Lượng mưa giờ', unit: 'mm', color: 'hsl(200, 90%, 45%)', digits: 1 },
-  precipitation_24h: { label: 'Tổng mưa tích lũy 24h', unit: 'mm', color: 'hsl(205, 85%, 45%)', digits: 1 },
-  precipitation_72h: { label: 'Tổng mưa 72h (Chỉ số rửa trôi)', unit: 'mm', color: 'hsl(220, 80%, 50%)', digits: 1 },
-  water_balance_24h: { label: 'Cân bằng nước 24h (P − ET0)', unit: 'mm', color: 'hsl(175, 75%, 38%)', digits: 1 },
-  rain: { label: 'Mưa', unit: 'mm', color: 'hsl(205, 80%, 50%)', digits: 1 },
-  cloud_cover: { label: 'Mây che phủ', unit: '%', color: 'hsl(220, 10%, 55%)', digits: 0 },
-  wind_speed_10m: { label: 'Gió 10m', unit: 'km/h', color: 'hsl(180, 55%, 40%)', digits: 1 },
-  dew_point_2m: { label: 'Điểm sương 2m', unit: '°C', color: 'hsl(190, 60%, 45%)', digits: 1 },
-  surface_pressure: { label: 'Áp suất bề mặt', unit: 'hPa', color: 'hsl(250, 35%, 55%)', digits: 0 },
+  temperature_2m: { label: 'Nhiệt độ không khí', unit: '°C', color: 'hsl(0, 75%, 55%)', digits: 1 },
+  relative_humidity_2m: { label: 'Độ ẩm tương đối không khí', unit: '%', color: 'hsl(215, 75%, 55%)', digits: 0 },
+  vapour_pressure_deficit: { label: 'Độ thiếu hụt áp suất hơi nước', unit: 'kPa', color: 'hsl(300, 50%, 50%)', digits: 2 },
+  shortwave_radiation: { label: 'Bức xạ mặt trời', unit: 'W/m²', color: 'hsl(42, 95%, 50%)', digits: 0 },
+  et0_fao_evapotranspiration: { label: 'Bốc thoát hơi nước tham chiếu', unit: 'mm', color: 'hsl(150, 60%, 40%)', digits: 2 },
+  precipitation: { label: 'Lượng mưa theo giờ', unit: 'mm', color: 'hsl(200, 90%, 45%)', digits: 1 },
+  precipitation_24h: { label: 'Tổng lượng mưa tích lũy 24 giờ', unit: 'mm', color: 'hsl(205, 85%, 45%)', digits: 1 },
+  precipitation_72h: { label: 'Tổng lượng mưa tích lũy 72 giờ', unit: 'mm', color: 'hsl(220, 80%, 50%)', digits: 1 },
+  water_balance_24h: { label: 'Cân bằng nước khí tượng 24 giờ', unit: 'mm', color: 'hsl(175, 75%, 38%)', digits: 1 },
+  rain: { label: 'Lượng mưa', unit: 'mm', color: 'hsl(205, 80%, 50%)', digits: 1 },
+  cloud_cover: { label: 'Tỷ lệ mây che phủ', unit: '%', color: 'hsl(220, 10%, 55%)', digits: 0 },
+  wind_speed_10m: { label: 'Tốc độ gió', unit: 'km/h', color: 'hsl(180, 55%, 40%)', digits: 1 },
+  dew_point_2m: { label: 'Nhiệt độ điểm sương', unit: '°C', color: 'hsl(190, 60%, 45%)', digits: 1 },
+  surface_pressure: { label: 'Áp suất khí quyển', unit: 'hPa', color: 'hsl(250, 35%, 55%)', digits: 0 },
   precipitation_probability: { label: 'Xác suất mưa', unit: '%', color: 'hsl(205, 60%, 60%)', digits: 0 },
-  soil_temperature: { label: 'Nhiệt độ đất tầng rễ (ERA5-Land)', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
-  soil_moisture: { label: 'Độ ẩm đất tầng rễ (ERA5-Land)', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
-  soil_temperature_0cm: { label: 'Nhiệt độ đất 0cm', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
-  soil_moisture_0_to_1cm: { label: 'Độ ẩm đất 0–1cm', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
+  soil_temperature: { label: 'Nhiệt độ đất tầng mặt', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
+  soil_moisture: { label: 'Độ ẩm đất vùng rễ', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
+  soil_temperature_0cm: { label: 'Nhiệt độ đất bề mặt', unit: '°C', color: 'hsl(28, 75%, 48%)', digits: 1 },
+  soil_moisture_0_to_1cm: { label: 'Độ ẩm đất bề mặt', unit: 'm³/m³', color: 'hsl(195, 70%, 40%)', digits: 3 },
 };
 
 export function weatherVarLabel(key: string, withUnit = false): string {
