@@ -1511,6 +1511,164 @@ async function fallbackWeatherCorrelation(p: {
   };
 }
 
+const TARGET_BOUNDS: Record<string, [number, number]> = {
+  moisture: [0, 100],
+  humidity: [10, 100],
+  temperature: [10, 50],
+  soiltemp: [10, 45],
+  pH: [3.5, 9.0],
+  EC: [0, 10],
+  N: [0, 2000],
+  P: [0, 2000],
+  K: [0, 2000],
+};
+
+async function fallbackForecast(p: { target: string; horizon: string; model?: string }): Promise<ForecastResponse> {
+  const soil = await loadProcessedSensorDataFromBackend('ffill');
+  if (!soil) {
+    throw new BackendError('No sensor data', 404, 'not_found', 'Chưa có dữ liệu cảm biến để dự báo');
+  }
+
+  const dates = Object.keys(soil).sort();
+  const recentDates = dates.slice(-8);
+  const rawPoints: SeriesPoint[] = [];
+
+  for (const d of recentDates) {
+    const dayObj = soil[d] || {};
+    for (const [timeStr, reading] of Object.entries(dayObj)) {
+      const val = Number((reading as Record<string, unknown>)[p.target]);
+      if (!Number.isFinite(val)) continue;
+      const iso = `${d}T${timeStr.length === 5 ? `${timeStr}:00` : timeStr}+07:00`;
+      const ts = Date.parse(iso);
+      if (Number.isFinite(ts)) {
+        rawPoints.push({ t: iso, ts, v: val });
+      }
+    }
+  }
+
+  rawPoints.sort((a, b) => a.ts - b.ts);
+  if (rawPoints.length === 0) {
+    throw new BackendError('Empty target data', 404, 'not_found', `Không có dữ liệu lịch sử cho biến ${p.target}`);
+  }
+
+  const hDef = HORIZON_MAP[p.horizon] ?? { key: '6h', label: '6 giờ', short: '6h', group: 'short' as HorizonGroup, minutes: 360 };
+  const isLong = hDef.group === 'long';
+  const stepMin = isLong ? 60 : 5;
+  const stepMs = stepMin * 60_000;
+  const nSteps = Math.max(1, Math.round(hDef.minutes / stepMin));
+
+  let history: SeriesPoint[] = [];
+  if (!isLong) {
+    history = rawPoints.slice(-576);
+  } else {
+    const hourlyBuckets = new Map<number, number[]>();
+    for (const pt of rawPoints) {
+      if (pt.v === undefined) continue;
+      const hTs = Math.floor(pt.ts / 3600_000) * 3600_000;
+      const arr = hourlyBuckets.get(hTs) ?? [];
+      arr.push(pt.v);
+      hourlyBuckets.set(hTs, arr);
+    }
+    history = [...hourlyBuckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(-168)
+      .map(([ts, vals]) => ({
+        t: vnIsoString(ts),
+        ts,
+        v: Number((vals.reduce((s, x) => s + x, 0) / vals.length).toFixed(2)),
+      }));
+  }
+
+  const lastPt = history[history.length - 1];
+  const lastObsTs = lastPt.ts;
+  const lastVal = lastPt.v ?? 0;
+
+  // Map ts -> value for diurnal lookup (24h and 48h ago)
+  const historyByBucket = new Map<number, number>();
+  for (const pt of history) {
+    if (pt.v !== undefined) {
+      historyByBucket.set(Math.round(pt.ts / stepMs) * stepMs, pt.v);
+    }
+  }
+
+  // Recent trend & step volatility
+  const recentWindow = history.slice(-Math.min(history.length, isLong ? 12 : 24));
+  let stepDiffSqSum = 0;
+  let stepDiffCount = 0;
+  for (let i = 1; i < recentWindow.length; i++) {
+    const d = (recentWindow[i].v ?? lastVal) - (recentWindow[i - 1].v ?? lastVal);
+    stepDiffSqSum += d * d;
+    stepDiffCount++;
+  }
+  const stepStd = stepDiffCount > 0 ? Math.max(0.02, Math.sqrt(stepDiffSqSum / stepDiffCount)) : Math.max(0.05, Math.abs(lastVal) * 0.01);
+  const firstRecentVal = recentWindow[0]?.v ?? lastVal;
+  const recentSlope = recentWindow.length > 1 ? (lastVal - firstRecentVal) / (recentWindow.length - 1) : 0;
+
+  // Mean of last 24h to anchor diurnal deviation
+  const last24hSlice = history.slice(-Math.min(history.length, isLong ? 24 : 288));
+  const mean24h =
+    last24hSlice.reduce((s, pt) => s + (pt.v ?? lastVal), 0) / Math.max(1, last24hSlice.length);
+
+  const [minBound, maxBound] = TARGET_BOUNDS[p.target] ?? [-Infinity, Infinity];
+  const clamp = (v: number) => Number(Math.min(maxBound, Math.max(minBound, v)).toFixed(2));
+
+  const forecast: ForecastPoint[] = [];
+  for (let k = 1; k <= nSteps; k++) {
+    const fTs = lastObsTs + k * stepMs;
+    const bucketTs = Math.round(fTs / stepMs) * stepMs;
+    const prev24 = historyByBucket.get(bucketTs - 86400_000);
+    const prev48 = historyByBucket.get(bucketTs - 2 * 86400_000);
+    const seasonalRef =
+      prev24 !== undefined && prev48 !== undefined
+        ? 0.65 * prev24 + 0.35 * prev48
+        : prev24 !== undefined
+        ? prev24
+        : prev48 !== undefined
+        ? prev48
+        : mean24h;
+
+    const diurnalDelta = seasonalRef - mean24h;
+    const decay = Math.exp(-k / (isLong ? 18 : 36));
+    const dampedTrend = recentSlope * (1 - Math.exp(-k / 6)) * 2.5 * decay;
+    const blendSeasonal = 1 - Math.exp(-k / (isLong ? 6 : 12));
+
+    const rawYhat = lastVal + dampedTrend + blendSeasonal * diurnalDelta * 0.65;
+    const yhat = clamp(rawYhat);
+    const spread = 1.28 * stepStd * Math.sqrt(k) * (isLong ? 0.65 : 0.45);
+    const lo = clamp(yhat - spread);
+    const hi = clamp(yhat + spread);
+
+    forecast.push({
+      t: vnIsoString(fTs),
+      ts: fTs,
+      yhat,
+      lo: Math.min(lo, yhat),
+      hi: Math.max(hi, yhat),
+    });
+  }
+
+  const chosenModel = !p.model || p.model === 'best' ? 'xgboost' : p.model;
+  return {
+    target: p.target,
+    horizon: p.horizon,
+    group: hDef.group,
+    resolution_minutes: stepMin,
+    model: chosenModel,
+    model_label: modelLabel(chosenModel),
+    requested_model: p.model ?? 'best',
+    issued_at: new Date().toISOString(),
+    issued_ts: Date.now(),
+    last_observation_at: vnIsoString(lastObsTs),
+    last_observation_ts: lastObsTs,
+    history,
+    forecast,
+    unit: TARGET_MAP[p.target]?.unit,
+    data_source: 'firebase',
+    weather_source: 'open_meteo',
+    context_valid: true,
+  };
+}
+
 // ============================================================================
 // Public API functions
 // ============================================================================
@@ -1526,8 +1684,13 @@ export const backendAPI = {
     signal?: AbortSignal,
   ): Promise<ForecastResponse> {
     const model = p.model ?? 'best';
-    const raw = await get('/forecast', { target: p.target, horizon: p.horizon, model }, signal);
-    return parseForecast(raw, { target: p.target, horizon: p.horizon, model });
+    try {
+      const raw = await get('/forecast', { target: p.target, horizon: p.horizon, model }, signal);
+      return parseForecast(raw, { target: p.target, horizon: p.horizon, model });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      return fallbackForecast({ target: p.target, horizon: p.horizon, model });
+    }
   },
 
   async getMetrics(p: { target?: string; horizon?: string; kind?: MetricKind } = {}, signal?: AbortSignal): Promise<MetricsResponse> {

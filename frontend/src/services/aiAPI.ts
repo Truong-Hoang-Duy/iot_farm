@@ -1,6 +1,8 @@
 // src/services/aiAPI.ts
 // Client gọi API xuống FastAPI Backend (Port 8000 qua Vite Proxy /api)
 
+import { fetchProcessedStagesSummary, getAlerts } from './firebaseAPI';
+
 export interface SensorReadingInput {
   moisture?: number;
   soiltemp?: number;
@@ -168,27 +170,147 @@ export interface AIAlertsBundleResponse {
   alerts: AIAlertItem[];
 }
 
+const STAGE_6_THRESHOLDS: Array<{
+  key: keyof SensorReadingInput;
+  label: string;
+  min: number;
+  max: number;
+  unit: string;
+}> = [
+  { key: 'moisture', label: 'Độ ẩm đất', min: 55, max: 65, unit: '%' },
+  { key: 'soiltemp', label: 'Nhiệt độ đất', min: 24, max: 29, unit: '°C' },
+  { key: 'pH', label: 'Độ pH đất', min: 6.2, max: 6.8, unit: 'pH' },
+  { key: 'EC', label: 'Độ dẫn điện EC', min: 0.8, max: 1.4, unit: 'mS/cm' },
+  { key: 'N', label: 'Đạm (N)', min: 80, max: 150, unit: 'ppm' },
+  { key: 'P', label: 'Lân (P)', min: 250, max: 450, unit: 'ppm' },
+  { key: 'K', label: 'Kali (K)', min: 300, max: 500, unit: 'ppm' },
+  { key: 'temperature', label: 'Nhiệt độ không khí', min: 24, max: 31, unit: '°C' },
+  { key: 'humidity', label: 'Độ ẩm không khí', min: 60, max: 75, unit: '%' },
+];
+
+async function buildClientFallbackAIAlerts(horizon: string = '6h'): Promise<AIAlertsBundleResponse | null> {
+  const [summaryRes, fbAlerts] = await Promise.all([
+    fetchProcessedStagesSummary('ffill').catch(() => null),
+    getAlerts().catch(() => []),
+  ]);
+  if (!summaryRes?.latest?.reading) return null;
+
+  const reading = summaryRes.latest.reading;
+  const ts = summaryRes.latest.timestamp;
+  const datePart = summaryRes.latest.date;
+  const totalDays = summaryRes.summary?.totalDays || 263;
+
+  const anomalies: AIAlertsBundleResponse['anomalies_detected'] = [];
+  for (const cfg of STAGE_6_THRESHOLDS) {
+    const val = Number(reading[cfg.key as keyof typeof reading] ?? 0);
+    if (val < cfg.min) {
+      anomalies.push({
+        key: cfg.key,
+        label: cfg.label,
+        value: val,
+        min: cfg.min,
+        max: cfg.max,
+        unit: cfg.unit,
+        status: 'low',
+        delta: `-${Number((cfg.min - val).toFixed(2))} ${cfg.unit}`,
+      });
+    } else if (val > cfg.max) {
+      anomalies.push({
+        key: cfg.key,
+        label: cfg.label,
+        value: val,
+        min: cfg.min,
+        max: cfg.max,
+        unit: cfg.unit,
+        status: 'high',
+        delta: `+${Number((val - cfg.max).toFixed(2))} ${cfg.unit}`,
+      });
+    }
+  }
+
+  const todayAlerts = fbAlerts
+    .filter((a) => a.time && a.time.startsWith(datePart))
+    .map((a) => ({
+      id: a.id,
+      level: a.level as 0 | 1 | 2,
+      message: a.message,
+      action: a.action,
+      time: a.time,
+      active: a.active,
+    }));
+
+  const fallbackAlerts: AIAlertItem[] =
+    todayAlerts.length > 0
+      ? todayAlerts
+      : anomalies.map((item) => ({
+          id: `${item.label} ${item.status === 'low' ? 'thấp' : 'cao'}`,
+          level: 1,
+          message: `Tại mẫu đo ${ts}, ${item.label.toLowerCase()} đạt ${item.value} ${item.unit}, nằm ngoài ngưỡng chuẩn (${item.min}–${item.max} ${item.unit}, lệch ${item.delta}).`,
+          action:
+            item.status === 'low'
+              ? `Bổ sung hoặc điều chỉnh tăng ${item.label.toLowerCase()} về vùng tối ưu ${item.min}–${item.max} ${item.unit}.`
+              : `Kiểm tra thoát nước/thông gió để hạ ${item.label.toLowerCase()} về vùng tối ưu ${item.min}–${item.max} ${item.unit}.`,
+          time: ts,
+          active: true,
+        }));
+
+  return {
+    status: 'ok',
+    is_mock_test: false,
+    sensor_timestamp: ts,
+    forecast_horizon: horizon,
+    sensor_reading: reading,
+    plant_context: {
+      plant_type: 'Cây ớt',
+      age_days: totalDays,
+      stage_number: 6,
+      growth_stage: 'Giai đoạn 6: Cuối vụ và phục hồi đất',
+    },
+    anomalies_detected: anomalies,
+    predictive_anomalies_count: fallbackAlerts.filter((a) => a.id.startsWith('Dự báo')).length,
+    prompt_used: 'Client-side agronomic threshold & Firebase sync',
+    ai_model_used: 'firebase-sync',
+    generated_at: new Date().toISOString(),
+    alerts: fallbackAlerts,
+  };
+}
+
+async function fetchJsonIfValid(url: string, options?: RequestInit): Promise<any | null> {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text || text.trim().startsWith('<')) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 export const fetchLatestAIAlerts = async (
   refresh: boolean = false,
   horizon: string = '6h',
 ): Promise<AIAlertsBundleResponse | null> => {
-  try {
-    const res = await fetch(`${API_BASE}/api/alerts/latest?refresh=${refresh}&horizon=${encodeURIComponent(horizon)}`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    console.warn('[AI Alerts API] Lỗi đọc cảnh báo từ Backend:', err);
+  const json = await fetchJsonIfValid(
+    `${API_BASE}/api/alerts/latest?refresh=${refresh}&horizon=${encodeURIComponent(horizon)}`
+  );
+  if (json && json.status) {
+    return json as AIAlertsBundleResponse;
   }
-  return null;
+  return buildClientFallbackAIAlerts(horizon);
 };
 
 export const triggerAnalyzeAIAlerts = async (horizon: string = '6h'): Promise<AIAlertsBundleResponse> => {
-  const res = await fetch(`${API_BASE}/api/alerts/analyze?horizon=${encodeURIComponent(horizon)}`, { method: 'POST' });
-  if (!res.ok) {
-    throw new Error(`Lỗi phân tích cảnh báo từ Gemini (HTTP ${res.status})`);
+  const json = await fetchJsonIfValid(
+    `${API_BASE}/api/alerts/analyze?horizon=${encodeURIComponent(horizon)}`,
+    { method: 'POST' }
+  );
+  if (json && json.status) {
+    return json as AIAlertsBundleResponse;
   }
-  return await res.json();
+  const fallback = await buildClientFallbackAIAlerts(horizon);
+  if (fallback) return fallback;
+  throw new Error('Không thể phân tích cảnh báo do thiếu dữ liệu cảm biến.');
 };
 
 export const insertMockTestAndAnalyzeAlerts = async (): Promise<AIAlertsBundleResponse> => {
