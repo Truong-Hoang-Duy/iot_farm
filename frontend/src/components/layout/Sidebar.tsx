@@ -12,8 +12,6 @@ import {
   ScrollText,
   Menu,
   X,
-  PanelLeftClose,
-  PanelLeftOpen,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -89,11 +87,11 @@ export function Sidebar({ isCollapsed = false, onToggleCollapse }: SidebarProps)
         )}
 
         <div className="flex h-full flex-col">
-          {/* Logo & Toggle Header */}
+          {/* Logo Header */}
           <div
             className={cn(
               "flex items-center border-b border-border/50 transition-all duration-300",
-              isCollapsed ? "lg:justify-center lg:px-2 lg:py-6 px-6 py-6 justify-between" : "justify-between px-6 py-6"
+              isCollapsed ? "lg:justify-center lg:px-2 lg:py-6 px-6 py-6" : "px-6 py-6"
             )}
           >
             <div className="flex items-center gap-3 overflow-hidden">
@@ -115,16 +113,6 @@ export function Sidebar({ isCollapsed = false, onToggleCollapse }: SidebarProps)
                 <p className="text-xs text-muted-foreground font-medium">ĐH CNTT - ĐHQG TP.HCM</p>
               </div>
             </div>
-
-            {onToggleCollapse && !isCollapsed && (
-              <button
-                onClick={onToggleCollapse}
-                title="Thu gọn điều hướng"
-                className="hidden lg:flex p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-              >
-                <PanelLeftClose className="h-4 w-4" />
-              </button>
-            )}
           </div>
 
           {/* Navigation */}
