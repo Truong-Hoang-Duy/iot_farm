@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,6 +11,8 @@ from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 from app.services.firebase_service import FIREBASE_DB_URL
+
+VN_TZ = timezone(timedelta(hours=7))
 
 RANDOM_STATE = 42
 FREQUENCY = "5min"
@@ -34,21 +37,65 @@ LOCAL_JSON_PATHS = [
 
 _processed_cache: Dict[str, Dict[str, Any]] = {}
 _raw_payload_cache: Optional[Dict[str, Any]] = None
+_last_firebase_sync_date: Optional[str] = None
+
+
+async def sync_soil_all_from_firebase() -> Dict[str, Any]:
+    """Kéo toàn bộ dữ liệu /data từ Firebase về lưu vào file soil_all.json và làm mới bộ nhớ đệm."""
+    global _raw_payload_cache, _processed_cache, _last_firebase_sync_date
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        res = await client.get(f"{FIREBASE_DB_URL}/data.json")
+        if res.status_code != 200 or not res.json():
+            raise RuntimeError(f"Firebase trả về HTTP {res.status_code} hoặc dữ liệu rỗng.")
+        fb_data = res.json()
+
+    payload = {"data": fb_data} if "data" not in fb_data else fb_data
+    _raw_payload_cache = payload
+    _processed_cache.clear()
+    _last_firebase_sync_date = datetime.now(VN_TZ).strftime("%Y-%m-%d")
+
+    saved_paths: List[str] = []
+    target_paths = [
+        PROJECT_ROOT / "frontend" / "public" / "soil_all.json",
+        PROJECT_ROOT / "visualization" / "soil_all.json",
+    ]
+    for path in target_paths:
+        try:
+            if path.parent.exists():
+                with path.open("w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+                saved_paths.append(str(path))
+        except Exception as e:
+            print(f"[SensorProcessing] Không thể ghi {path}: {e}")
+
+    days = sorted(payload.get("data", {}).keys())
+    return {
+        "status": "ok",
+        "synced_at": datetime.now(VN_TZ).isoformat(timespec="seconds"),
+        "total_days": len(days),
+        "first_date": days[0] if days else None,
+        "last_date": days[-1] if days else None,
+        "saved_paths": saved_paths,
+    }
 
 
 async def fetch_raw_sensor_payload(force_refresh: bool = False) -> Dict[str, Any]:
     """Đọc dữ liệu cảm biến từ Firebase Realtime Database (/data) hoặc bản lưu cục bộ."""
-    global _raw_payload_cache
+    global _raw_payload_cache, _last_firebase_sync_date
+    today_vn = datetime.now(VN_TZ).strftime("%Y-%m-%d")
+
+    # Nếu đã sang ngày mới (qua 0h đêm), tự động kéo dữ liệu mới từ Firebase về cập nhật soil_all.json
+    if _last_firebase_sync_date is not None and _last_firebase_sync_date != today_vn:
+        force_refresh = True
+
     if _raw_payload_cache is not None and not force_refresh:
         return _raw_payload_cache
 
     if force_refresh:
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                res = await client.get(f"{FIREBASE_DB_URL}/data.json")
-                if res.status_code == 200 and res.json():
-                    _raw_payload_cache = {"data": res.json()}
-                    return _raw_payload_cache
+            await sync_soil_all_from_firebase()
+            if _raw_payload_cache is not None:
+                return _raw_payload_cache
         except Exception as e:
             print(f"[SensorProcessing] Lỗi kết nối Firebase, chuyển sang đọc dữ liệu cục bộ: {e}")
 
@@ -57,13 +104,13 @@ async def fetch_raw_sensor_payload(force_refresh: bool = False) -> Dict[str, Any
             with path.open("r", encoding="utf-8") as f:
                 loaded = json.load(f)
                 _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
+                if _last_firebase_sync_date is None:
+                    _last_firebase_sync_date = today_vn
                 return _raw_payload_cache
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        res = await client.get(f"{FIREBASE_DB_URL}/data.json")
-        if res.status_code == 200 and res.json():
-            _raw_payload_cache = {"data": res.json()}
-            return _raw_payload_cache
+    await sync_soil_all_from_firebase()
+    if _raw_payload_cache is not None:
+        return _raw_payload_cache
 
     raise RuntimeError("Không tìm thấy dữ liệu cảm biến.")
 

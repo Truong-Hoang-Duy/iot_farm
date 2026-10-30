@@ -127,9 +127,10 @@ async function readJsonOrThrow(res: Response): Promise<unknown> {
 }
 
 export async function fetchSyncStatus(signal?: AbortSignal): Promise<SyncStatusPayload> {
+  const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
   let res: Response;
   try {
-    res = await fetch('/api/sync/status', { signal });
+    res = await fetch(`${apiBase}/api/sync/status`, { signal });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     throw new BackendUnavailableError();
@@ -139,9 +140,10 @@ export async function fetchSyncStatus(signal?: AbortSignal): Promise<SyncStatusP
 }
 
 export async function runSyncNow(direction: 'both' | SyncDirection = 'both'): Promise<SyncStatusPayload> {
+  const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
   let res: Response;
   try {
-    res = await fetch(`/api/sync/run?direction=${encodeURIComponent(direction)}`, { method: 'POST' });
+    res = await fetch(`${apiBase}/api/sync/run?direction=${encodeURIComponent(direction)}`, { method: 'POST' });
   } catch {
     throw new BackendUnavailableError();
   }

@@ -1,6 +1,9 @@
 // Firebase API (Controls & Config) + Backend Sensor API
 import { db } from '../config/firebaseConfig';
-import { ref, get, set, onValue, update, remove, type Unsubscribe } from 'firebase/database';
+import { ref, get, set, onValue, update, remove, query, orderByKey, limitToLast, type Unsubscribe } from 'firebase/database';
+
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+export const USE_LOCAL_SOIL_DATA = true;
 
 // Types matching sensor data structure
 export interface FirebaseSensorReading {
@@ -188,8 +191,84 @@ export interface BackendStagesSummaryResponse {
 }
 
 let cachedSoilData: FirebaseSensorData | null = null;
+let cachedLocalSoilData: FirebaseSensorData | null = null;
 let cachedStagesSummary: BackendStagesSummaryResponse | null = null;
 let loadPromise: Promise<FirebaseSensorData | null> | null = null;
+let localLoadPromise: Promise<FirebaseSensorData | null> | null = null;
+
+// Đọc nhanh mẫu cảm biến mới nhất trực tiếp từ Firebase RTDB (chỉ lấy 1 ngày cuối ~30KB, mất ~150ms)
+export const fetchLatestFirebaseReadingFast = async (): Promise<{
+  reading: FirebaseSensorReading;
+  date: string;
+  time: string;
+  timestamp: string;
+} | null> => {
+  try {
+    const latestDayQuery = query(ref(db, 'data'), orderByKey(), limitToLast(1));
+    const snapshot = await get(latestDayQuery);
+    if (snapshot.exists()) {
+      const val = snapshot.val() as FirebaseSensorData;
+      const dates = Object.keys(val).sort().reverse();
+      if (dates.length > 0) {
+        const latestDate = dates[0];
+        const times = Object.keys(val[latestDate] || {}).sort().reverse();
+        if (times.length > 0) {
+          const latestTime = times[0];
+          return {
+            reading: val[latestDate][latestTime],
+            date: latestDate,
+            time: latestTime,
+            timestamp: `${latestDate} ${latestTime}`,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[SensorAPI] Lỗi đọc nhanh mẫu mới nhất từ Firebase:', err);
+  }
+  return null;
+};
+
+// Tải nhanh /soil_all.json từ CDN kết hợp 2 ngày mới nhất từ Firebase RTDB để tránh chờ Cold Start của Backend
+export const loadLocalSoilData = async (): Promise<FirebaseSensorData | null> => {
+  if (cachedSoilData) return cachedSoilData;
+  if (cachedLocalSoilData) return cachedLocalSoilData;
+  if (localLoadPromise) return localLoadPromise;
+
+  localLoadPromise = (async () => {
+    try {
+      const [localRes, recentSnap] = await Promise.all([
+        fetch('/soil_all.json').catch(() => null),
+        get(query(ref(db, 'data'), orderByKey(), limitToLast(2))).catch(() => null),
+      ]);
+
+      let merged: FirebaseSensorData = {};
+      if (localRes && localRes.ok) {
+        const json = await localRes.json();
+        merged = ((json && json.data) ? json.data : json) as FirebaseSensorData;
+      }
+
+      if (recentSnap && recentSnap.exists()) {
+        const recentData = recentSnap.val() as FirebaseSensorData;
+        for (const [day, readings] of Object.entries(recentData)) {
+          merged[day] = { ...(merged[day] || {}), ...readings };
+        }
+      }
+
+      if (Object.keys(merged).length > 0) {
+        cachedLocalSoilData = merged;
+        return merged;
+      }
+    } catch (err) {
+      console.warn('[SensorAPI] Không thể tải /soil_all.json dự phòng:', err);
+    } finally {
+      localLoadPromise = null;
+    }
+    return null;
+  })();
+
+  return localLoadPromise;
+};
 
 // Gọi Backend API (/api/sensors/data) để lấy dữ liệu cảm biến đã xử lý
 export const loadProcessedSensorDataFromBackend = async (
@@ -200,8 +279,7 @@ export const loadProcessedSensorDataFromBackend = async (
 
   loadPromise = (async () => {
     try {
-      const apiBase = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-      const res = await fetch(`${apiBase}/api/sensors/data?method=${encodeURIComponent(method)}`);
+      const res = await fetch(`${API_BASE}/api/sensors/data?method=${encodeURIComponent(method)}`);
       if (res.ok) {
         const json = await res.json();
         cachedSoilData = (json.data || json) as FirebaseSensorData;
@@ -236,7 +314,7 @@ export const fetchProcessedStagesSummary = async (
     return cachedStagesSummary;
   }
   try {
-    const res = await fetch(`/api/sensors/stages-summary?method=${encodeURIComponent(method)}`);
+    const res = await fetch(`${API_BASE}/api/sensors/stages-summary?method=${encodeURIComponent(method)}`);
     if (res.ok) {
       const data = (await res.json()) as BackendStagesSummaryResponse;
       cachedStagesSummary = data;
@@ -249,11 +327,20 @@ export const fetchProcessedStagesSummary = async (
 };
 
 export const getSensorData = async (): Promise<FirebaseSensorData> => {
+  if (cachedSoilData) return cachedSoilData;
+
+  // Đua giữa Backend và bản dữ liệu nhanh (/soil_all.json + Firebase ngày mới nhất) nếu Backend đang Cold Start
+  const fastTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+  const quickBackend = await Promise.race([loadProcessedSensorDataFromBackend('ffill'), fastTimeout]);
+  if (quickBackend) return quickBackend;
+
+  const localData = await loadLocalSoilData();
+  if (localData) return localData;
+
   const backendData = await loadProcessedSensorDataFromBackend('ffill');
-  if (backendData) {
-    return backendData;
-  }
-  throw new Error('Không thể tải dữ liệu cảm biến đã xử lý từ Backend API (/api/sensors/data)');
+  if (backendData) return backendData;
+
+  throw new Error('Không thể tải dữ liệu cảm biến từ Backend hoặc /soil_all.json');
 };
 
 // Lấy mẫu cảm biến mới nhất đã làm sạch từ Backend API (/api/sensors/latest)
@@ -262,7 +349,7 @@ export const getLatestSensorReading = async (): Promise<{
   timestamp: string;
 } | null> => {
   try {
-    const res = await fetch('/api/sensors/latest');
+    const res = await fetch(`${API_BASE}/api/sensors/latest`);
     if (res.ok) {
       const json = await res.json();
       if (json && json.reading) {
@@ -273,7 +360,15 @@ export const getLatestSensorReading = async (): Promise<{
       }
     }
   } catch (err) {
-    console.warn('[SensorAPI] Lỗi gọi /api/sensors/latest, chuyển sang đọc từ bộ nhớ đệm Backend:', err);
+    console.warn('[SensorAPI] Lỗi gọi /api/sensors/latest, chuyển sang đọc từ bộ nhớ đệm:', err);
+  }
+
+  const fastLatest = await fetchLatestFirebaseReadingFast();
+  if (fastLatest) {
+    return {
+      reading: fastLatest.reading,
+      timestamp: fastLatest.timestamp,
+    };
   }
 
   const data = await getSensorData();
@@ -291,12 +386,22 @@ export const getLatestSensorReading = async (): Promise<{
   };
 };
 
-// Đăng ký nhận dữ liệu cảm biến đã làm sạch từ Backend API
+// Đăng ký nhận dữ liệu cảm biến: hiển thị tức thời từ /soil_all.json + Firebase, sau đó cập nhật bản làm sạch từ Backend
 export const subscribeSensorData = (callback: (data: FirebaseSensorData) => void) => {
   let isCancelled = false;
+  let backendResolved = false;
 
+  // 1. Tải song song dữ liệu nhanh từ CDN (/soil_all.json + 2 ngày mới nhất trên Firebase) để hiển thị trong < 1 giây
+  loadLocalSoilData().then((localData) => {
+    if (localData && !isCancelled && !backendResolved) {
+      callback(localData);
+    }
+  });
+
+  // 2. Khi Backend hoàn tất làm sạch (ffill), cập nhật lại dữ liệu chuẩn hóa
   loadProcessedSensorDataFromBackend('ffill').then((backendData) => {
     if (backendData && !isCancelled) {
+      backendResolved = true;
       callback(backendData);
     }
   });

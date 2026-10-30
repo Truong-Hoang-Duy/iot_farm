@@ -1,14 +1,20 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from app.services.firebase_service import (
     save_recommendation_to_firebase,
     get_cached_recommendation_from_firebase,
 )
 from app.services.gemini_service import get_gemini_agronomy_advice
-from app.services.sensor_processing_service import get_current_plant_context
+from app.services.sensor_processing_service import (
+    get_current_plant_context,
+    get_processed_sensor_bundle,
+    sync_soil_all_from_firebase,
+)
 
+VN_TZ = timezone(timedelta(hours=7))
 _last_auto_run_key: Optional[str] = None
+_last_midnight_sync_date: Optional[str] = None
 
 
 def _is_cache_outdated(cached: Optional[Dict[str, Any]], context: Dict[str, Any]) -> bool:
@@ -66,7 +72,7 @@ async def run_auto_analysis(trigger_reason: str = "scheduled") -> Optional[Dict[
 
 async def auto_recommendation_worker():
     """Vòng lặp chạy ngầm kiểm tra và đồng bộ khuyến nghị với dữ liệu cây trồng thực tế."""
-    global _last_auto_run_key
+    global _last_auto_run_key, _last_midnight_sync_date
     print("[Scheduler] Worker phân tích tự động IoT Farm đã khởi động.")
 
     try:
@@ -81,9 +87,23 @@ async def auto_recommendation_worker():
     while True:
         try:
             await asyncio.sleep(600)
-            now = datetime.now()
+            now = datetime.now(VN_TZ)
             current_hour = now.hour
             current_date_str = now.strftime("%Y-%m-%d")
+
+            # Mốc 00:00 (0h đêm): Tự động kéo dữ liệu từ Firebase về cập nhật soil_all.json và bộ nhớ đệm
+            if current_hour == 0 and _last_midnight_sync_date != current_date_str:
+                print(f"[Scheduler] 00:00 ngày {current_date_str}: Bắt đầu đồng bộ /soil_all.json từ Firebase...")
+                try:
+                    sync_res = await sync_soil_all_from_firebase()
+                    await get_processed_sensor_bundle(method="ffill", force_refresh=False)
+                    _last_midnight_sync_date = current_date_str
+                    print(
+                        f"[Scheduler] Đã cập nhật /soil_all.json lúc 0h đêm "
+                        f"({sync_res['total_days']} ngày, đến {sync_res['last_date']})."
+                    )
+                except Exception as sync_err:
+                    print(f"[Scheduler] Lỗi đồng bộ /soil_all.json lúc 0h đêm: {sync_err}")
 
             is_morning_slot = current_hour == 6
             is_afternoon_slot = current_hour == 16

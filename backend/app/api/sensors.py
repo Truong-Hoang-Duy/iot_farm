@@ -1,6 +1,9 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
-from app.services.sensor_processing_service import get_processed_sensor_bundle
+from app.services.sensor_processing_service import (
+    get_processed_sensor_bundle,
+    sync_soil_all_from_firebase,
+)
 
 router = APIRouter(prefix="/sensors", tags=["Sensor Data"])
 
@@ -82,3 +85,17 @@ async def get_stages_cleaned_summary(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi tổng hợp dữ liệu theo giai đoạn: {e}")
+
+
+@router.post("/sync-soil-json")
+async def sync_soil_json_endpoint():
+    """Kéo dữ liệu mới nhất từ Firebase Realtime Database về cập nhật file soil_all.json và làm mới cache."""
+    try:
+        sync_info = await sync_soil_all_from_firebase()
+        bundle = await get_processed_sensor_bundle(method="ffill", force_refresh=False)
+        return {
+            **sync_info,
+            "pipeline_info": bundle["pipeline_info"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi đồng bộ soil_all.json từ Firebase: {e}")
