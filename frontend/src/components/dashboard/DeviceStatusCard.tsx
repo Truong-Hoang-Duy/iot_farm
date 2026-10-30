@@ -15,11 +15,13 @@ import {
   PlugZap,
   RefreshCw,
   Wind,
+  Sun,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useDeviceLive, useDeviceStatus, type DeviceLiveState } from '@/hooks/useDeviceStatus';
-import { offlineThresholdMs, type SensorHealth } from '@/services/deviceAPI';
+import { offlineThresholdMs, type RelayChannelStatus, type SensorHealth } from '@/services/deviceAPI';
 import { formatDurationVi, formatEpochMsVi, formatIntervalVi, formatRelativeVi } from '@/lib/timeKeys';
 
 interface DeviceStatusCardProps {
@@ -69,6 +71,42 @@ function InfoItem({ icon: Icon, label, children }: { icon: typeof Cpu; label: st
         <span className="truncate">{label}</span>
       </p>
       <div className="text-sm font-semibold truncate">{children}</div>
+    </div>
+  );
+}
+
+function RelayChannelItem({
+  icon: Icon,
+  label,
+  relay,
+  isOnline,
+}: {
+  icon: typeof Sun;
+  label: string;
+  relay?: RelayChannelStatus;
+  isOnline: boolean;
+}) {
+  const isOn = Boolean(relay?.on);
+
+  return (
+    <div className="rounded-lg bg-background/80 px-3 py-2 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-foreground min-w-0">
+        <Icon className={cn('h-3.5 w-3.5 shrink-0', isOn && isOnline ? 'text-primary' : 'text-muted-foreground')} />
+        <span className="truncate">{label}</span>
+      </div>
+      <span
+        className={cn(
+          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium shrink-0',
+          !isOnline
+            ? 'bg-destructive/10 text-destructive border-destructive/20'
+            : isOn
+            ? 'bg-success/10 text-success border-success/20'
+            : 'bg-secondary text-muted-foreground border-border',
+        )}
+      >
+        {isOnline && isOn && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-success animate-pulse" />}
+        {!isOnline ? 'Ngoại tuyến' : isOn ? 'Đang bật' : 'Đã tắt'}
+      </span>
     </div>
   );
 }
@@ -274,6 +312,34 @@ export function DeviceStatusCard({ deviceId, className, liveState }: DeviceStatu
         </InfoItem>
       </div>
 
+      {status.relays && (status.relays.light || status.relays.pump) && (
+        <div
+          className={cn(
+            'mt-4 rounded-xl border border-border bg-secondary/30 p-3',
+            !online && 'opacity-85',
+          )}
+        >
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-2">
+            <Zap className="h-3.5 w-3.5 text-primary" />
+            Trạng thái thiết bị chấp hành
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <RelayChannelItem
+              icon={Sun}
+              label="Đèn chiếu sáng"
+              relay={status.relays.light}
+              isOnline={online}
+            />
+            <RelayChannelItem
+              icon={Droplets}
+              label="Máy bơm nước"
+              relay={status.relays.pump}
+              isOnline={online}
+            />
+          </div>
+        </div>
+      )}
+
       {live && (
         <div
           className={cn(
@@ -291,7 +357,7 @@ export function DeviceStatusCard({ deviceId, className, liveState }: DeviceStatu
               )}
             >
               <Wind className="h-3.5 w-3.5" />
-              Thông số trực tiếp từ mạch {online ? '(Live)' : '(Tạm dừng – Thiết bị ngoại tuyến)'}
+              Thông số trực tiếp từ mạch {online ? '(Live)' : '(tạm dừng – thiết bị ngoại tuyến)'}
             </span>
             <div className="flex items-center gap-2">
               {!online && (

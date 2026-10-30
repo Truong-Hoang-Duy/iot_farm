@@ -69,17 +69,26 @@ DEFAULTS = {
     },
     "heartbeat": {
         "max_heartbeat_sec": "15",
-        "control_poll_sec": "5",
+        "control_poll_sec": "2",
         "live_enabled": "true",
         "live_interval_sec": "15",
     },
     "relay": {
-        "relay_enabled": "false",
-        "pump_pin": "31",
-        "light_pin": "33",
+        # Waveshare 3CH Relay trên Jetson Nano (jumper mặc định P29/P28/P25):
+        #   Relay 1 (CH1, P29) = Đèn chiếu sáng -> BOARD 40 (BCM 21)
+        #   Relay 2 (CH2, P28) = Máy bơm nước   -> BOARD 38 (BCM 20)
+        #   Relay 3 (CH3, P25) = Dự phòng       -> BOARD 37 (BCM 26)
+        "relay_enabled": "true",
+        "pin_mode": "BOARD",
+        "light_pin": "40",
+        "pump_pin": "38",
+        "spare_pin": "37",
         "active_low": "true",
         "max_pump_run_min": "30",
+        "max_light_run_min": "960",
         "default_irrigation_duration_min": "5",
+        "default_light_duration_min": "120",
+        "light_max_temp_c": "35.0",
         "report_every_sec": "60",
     },
     "paths": {
@@ -195,11 +204,17 @@ def load_config(path=None, base_dir=None, args=None):
     c.live_interval_sec = max(5.0, cp.getfloat("heartbeat", "live_interval_sec"))
 
     c.relay_enabled = cp.getboolean("relay", "relay_enabled")
-    c.pump_pin = cp.getint("relay", "pump_pin")
+    pin_mode = cp.get("relay", "pin_mode").strip().upper()
+    c.pin_mode = pin_mode if pin_mode in ("BOARD", "BCM") else "BOARD"
     c.light_pin = cp.getint("relay", "light_pin")
+    c.pump_pin = cp.getint("relay", "pump_pin")
+    c.spare_pin = cp.getint("relay", "spare_pin")
     c.active_low = cp.getboolean("relay", "active_low")
     c.max_pump_run_min = max(1.0, cp.getfloat("relay", "max_pump_run_min"))
+    c.max_light_run_min = max(0.0, cp.getfloat("relay", "max_light_run_min"))
     c.default_irrigation_duration_min = max(1.0, cp.getfloat("relay", "default_irrigation_duration_min"))
+    c.default_light_duration_min = max(1.0, cp.getfloat("relay", "default_light_duration_min"))
+    c.light_max_temp_c = cp.getfloat("relay", "light_max_temp_c")
     c.relay_report_every_sec = max(5.0, cp.getfloat("relay", "report_every_sec"))
 
     c.data_dir = _abs_path(base_dir, cp.get("paths", "data_dir"))

@@ -54,6 +54,16 @@ class SensorSuite(object):
             log.debug("Đọc nhanh cảm biến đất lỗi: %s", e)
             return None
 
+    def read_dht(self):
+        """Chỉ đọc cảm biến DHT20 (dùng cho điều khiển đèn auto). Lỗi => None."""
+        if self.dht is None:
+            return None
+        try:
+            return self.dht.read()
+        except Exception as e:  # noqa: BLE001
+            log.debug("Đọc nhanh cảm biến DHT20 lỗi: %s", e)
+            return None
+
     def close(self):
         for s in (self.soil, self.dht):
             try:

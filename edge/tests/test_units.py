@@ -64,7 +64,12 @@ class TestTimeUtil(unittest.TestCase):
         self.assertEqual(cfg.soil_slave_id, 2)
         self.assertEqual(cfg.dht_address, 0x38)
         self.assertEqual(cfg.sampling_interval_sec, 300)
-        self.assertFalse(cfg.relay_enabled)
+        self.assertTrue(cfg.relay_enabled)
+        self.assertEqual(cfg.pin_mode, "BOARD")
+        self.assertEqual(cfg.light_pin, 40)  # Waveshare Relay 1 (CH1, P29) = Đèn
+        self.assertEqual(cfg.pump_pin, 38)   # Waveshare Relay 2 (CH2, P28) = Máy bơm
+        self.assertEqual(cfg.spare_pin, 37)  # Waveshare Relay 3 (CH3, P25) = Dự phòng
+        self.assertTrue(cfg.active_low)
         self.assertTrue(cfg.data_dir.startswith(EDGE))
 
 
@@ -252,10 +257,81 @@ class TestRelayLogic(unittest.TestCase):
 
     def test_light(self):
         f = R.decide_light
+        # Lập lịch theo khoảng giờ (window)
         self.assertTrue(f(2, False, 7, 6, 18, True)[0])
         self.assertFalse(f(2, True, 19, 6, 18, True)[0])
         self.assertTrue(f(2, False, 23, 18, 6, True)[0])   # qua nửa đêm
+        # Lập lịch theo cữ + thời lượng (slots, tương tự máy bơm)
+        self.assertTrue(f(2, False, 6.25, None, None, True, slot_times=[6.0, 18.0], duration_min=30,
+                          schedule_style="slots")[0])
+        self.assertFalse(f(2, False, 6.75, None, None, True, slot_times=[6.0, 18.0], duration_min=30,
+                           schedule_style="slots")[0])
+        # Thủ công
         self.assertTrue(f(0, True, 3, 6, 18, True)[0])
+        # Tự động: bù quang kỳ theo giai đoạn cây + bảo vệ nhiệt độ DHT20
+        self.assertTrue(f(1, False, 18.5, None, None, True, age_days=45, air_temp=26.0)[0])
+        self.assertFalse(f(1, False, 12.0, None, None, True, age_days=45, air_temp=28.0)[0])
+        self.assertFalse(f(1, False, 18.5, None, None, True, age_days=45, air_temp=37.0, max_temp_c=35.0)[0])
+        self.assertTrue(f(1, False, 2.0, None, None, True, age_days=45, air_temp=16.5, min_temp_c=18.0)[0])
+
+    def test_waveshare_3ch_gpio_mapping(self):
+        class FakeGPIO(object):
+            BOARD = 10
+            BCM = 11
+            OUT = 0
+            LOW = 0
+            HIGH = 1
+
+            def __init__(self):
+                self.mode = None
+                self.levels = {}
+                self.cleaned = []
+
+            def setwarnings(self, _flag):
+                pass
+
+            def setmode(self, mode):
+                self.mode = mode
+
+            def setup(self, pin, _dir, initial=1):
+                self.levels[pin] = initial
+
+            def output(self, pin, val):
+                self.levels[pin] = val
+
+            def cleanup(self, pins=None):
+                self.cleaned = list(pins or [])
+
+        fg = FakeGPIO()
+        cfg = Stub(relay_enabled=True, pin_mode="BOARD", light_pin=40, pump_pin=38, spare_pin=37,
+                   active_low=True, max_pump_run_min=30, max_light_run_min=960,
+                   default_irrigation_duration_min=5, default_light_duration_min=120,
+                   light_max_temp_c=35.0, relay_report_every_sec=60)
+        rc = R.RelayController(cfg, gpio=fg)
+        self.assertFalse(rc.simulated)
+        self.assertEqual(fg.mode, FakeGPIO.BOARD)
+        # Active-low: mới khởi động tất cả kênh CH1(40), CH2(38), CH3(37) đều ở mức HIGH (TẮT)
+        self.assertEqual(fg.levels, {40: 1, 38: 1, 37: 1})
+
+        # Bật đèn thủ công -> chỉ Relay 1 (chân 40) xuống LOW
+        rc.update_remote({"config": {"irrigation_mode": 0, "light_mode": 0},
+                          "control": {"pump": {"status": False}, "light": {"status": True}}})
+        rc.evaluate(time.time(), True, None)
+        self.assertEqual(fg.levels[40], 0)
+        self.assertEqual(fg.levels[38], 1)
+        self.assertEqual(fg.levels[37], 1)
+
+        # Bật bơm thủ công -> Relay 2 (chân 38) xuống LOW
+        rc.update_remote({"config": {"irrigation_mode": 0, "light_mode": 0},
+                          "control": {"pump": {"status": True}, "light": {"status": False}}})
+        rc.evaluate(time.time(), True, None)
+        self.assertEqual(fg.levels[40], 1)
+        self.assertEqual(fg.levels[38], 0)
+        self.assertEqual(fg.levels[37], 1)
+
+        rc.shutdown()
+        self.assertEqual(fg.levels, {40: 1, 38: 1, 37: 1})
+        self.assertEqual(sorted(fg.cleaned), [37, 38, 40])
 
     def test_controller_safety(self):
         cfg = Stub(relay_enabled=False, pump_pin=31, light_pin=33, active_low=True,

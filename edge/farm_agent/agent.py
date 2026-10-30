@@ -108,6 +108,7 @@ class FarmAgent(object):
         }
         self.latest = None
         self._latest_soil = None  # (moisture, mono)
+        self._latest_air_temp = None  # (temperature, mono)
         self._last_read_mono = None
         self._live_dirty = False
         self._last_read_now_id = str(self.queue.get_meta("last_read_now_id", "") or "")
@@ -272,6 +273,8 @@ class FarmAgent(object):
                 self._last_read_mono = mono
                 if "moisture" in payload:
                     self._latest_soil = (payload["moisture"], mono)
+                if "temperature" in payload:
+                    self._latest_air_temp = (payload["temperature"], mono)
         for name in ("soil", "dht20"):
             if name in errors:
                 log.warning("Cảm biến %s lỗi: %s", name, errors[name])
@@ -523,6 +526,7 @@ class FarmAgent(object):
             "clock_offset_ms": ts["offset_ms"],
             "network_ok": bool(self.network_ok),
             "sensors": sensors,
+            "relays": self.relay.summary(),
             "last_error": self.last_error,
             "cpu_temp_c": read_cpu_temp(),
             "uptime_s": int(system_uptime_sec()),
@@ -656,6 +660,27 @@ class FarmAgent(object):
             return None
         return lm[0]
 
+    def _air_temp_for_control(self):
+        """Nhiệt độ không khí từ DHT20 cho chế độ đèn auto; đọc bổ sung nếu số liệu đã cũ."""
+        cfgd = self.relay.remote.get("config") if isinstance(self.relay.remote, dict) else None
+        mode = parse_mode((cfgd or {}).get("light_mode"))
+        lt = self._latest_air_temp
+        if mode == MODE_AUTO and self.cfg.dht_enabled:
+            if lt is None or time.monotonic() - lt[1] > 60.0:
+                if self._sensor_lock.acquire(False):
+                    try:
+                        d = self.sensors.read_dht() if hasattr(self.sensors, "read_dht") else None
+                    except Exception:  # noqa: BLE001
+                        d = None
+                    finally:
+                        self._sensor_lock.release()
+                    if d and d.get("temperature") is not None:
+                        lt = (float(d["temperature"]), time.monotonic())
+                        self._latest_air_temp = lt
+        if lt is None or time.monotonic() - lt[1] > 300:
+            return None
+        return lt[0]
+
     def _control_loop(self):
         cfg = self.cfg
         while not self.stop_event.is_set():
@@ -671,7 +696,12 @@ class FarmAgent(object):
                     except Exception as e:  # noqa: BLE001
                         log.debug("Đọc streaming lỗi: %s", e)
                     self._handle_read_now_command()
-                self.relay.evaluate(time.time(), self.timesync.is_synced(), self._moisture_for_control())
+                self.relay.evaluate(
+                    time.time(),
+                    self.timesync.is_synced(),
+                    self._moisture_for_control(),
+                    air_temp=self._air_temp_for_control(),
+                )
                 if self.relay.last_error:
                     self._set_error("relay", self.relay.last_error)
                     self.relay.last_error = None

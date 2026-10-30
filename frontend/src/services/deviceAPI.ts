@@ -37,6 +37,15 @@ export interface ReadNowAck {
   error?: string;
 }
 
+export interface RelayChannelStatus {
+  on?: boolean;
+  channel?: number;
+  pin?: number;
+  pin_mode?: string;
+  simulated?: boolean;
+  reason?: string;
+}
+
 export interface DeviceStatus {
   online?: boolean;
   /** Server timestamp (ms) của heartbeat gần nhất */
@@ -55,6 +64,10 @@ export interface DeviceStatus {
   sensors?: {
     soil?: SensorHealth | string;
     dht20?: SensorHealth | string;
+  };
+  relays?: {
+    light?: RelayChannelStatus;
+    pump?: RelayChannelStatus;
   };
   last_error?: string | null;
   cpu_temp_c?: number;

@@ -96,28 +96,46 @@ export interface StreamingThreshold {
 }
 
 export interface StreamingControlDevice {
-  status: boolean | number;
+  status?: boolean | number;
+  actual?: boolean;
+  simulated?: boolean;
   daily_time?: number;
-  last_on_time?: string;
+  last_on_time?: string | number;
+  updated_at?: number;
 }
 
 export interface LightScheduleSlot {
-  on: number;
-  off: number;
+  on: number | string;
+  off: number | string;
+}
+
+export interface LightScheduleConfig {
+  mode?: 'window' | 'slots';
+  on?: number | string;
+  off?: number | string;
+  on2?: number | string;
+  off2?: number | string;
+  time1?: number | string;
+  time2?: number | string;
+  time3?: number | string;
 }
 
 export interface StreamingConfig {
   config: {
     irrigation_mode: number;
+    irrigation_duration_min?: number;
     irrigation_time: {
-      time1: number;
-      time2: number;
-      [key: string]: number;
+      time1?: number | string;
+      time2?: number | string;
+      time3?: number | string;
+      [key: string]: number | string | undefined;
     };
     light_mode: number | string;
-    light_time?: {
-      on: number | string;
-      off: number | string;
+    light_duration_min?: number;
+    light_time?: LightScheduleConfig;
+    light_auto?: {
+      max_temp_c?: number;
+      min_temp_c?: number;
     };
     plant: {
       age_days: number;
@@ -892,37 +910,162 @@ export const setStreamingControlStatus = async (device: 'pump' | 'light', status
   await set(statusRef, status);
 };
 
-export const setStreamingIrrigationTime = async (times: { time1?: number; time2?: number }): Promise<void> => {
-  if (times.time1 !== undefined) {
-    const time1Ref = ref(db, 'streaming/config/irrigation_time/time1');
-    await set(time1Ref, times.time1);
+export const normalizeScheduleClock = (
+  val: number | string | undefined | null,
+  fallback: string = '06:00',
+): string => {
+  if (val === undefined || val === null || val === '') return fallback;
+  if (typeof val === 'number' && Number.isFinite(val)) {
+    const totalMin = Math.round((((val % 24) + 24) % 24) * 60) % (24 * 60);
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
+    const mm = String(totalMin % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
   }
-  if (times.time2 !== undefined) {
-    const time2Ref = ref(db, 'streaming/config/irrigation_time/time2');
-    await set(time2Ref, times.time2);
+  const s = String(val).trim();
+  if (!s) return fallback;
+  if (s.includes(':')) {
+    const [rawH, rawM] = s.split(':');
+    const hh = Math.min(23, Math.max(0, parseInt(rawH, 10) || 0));
+    const mm = Math.min(59, Math.max(0, parseInt(rawM, 10) || 0));
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
   }
+  const num = Number(s);
+  if (Number.isFinite(num)) {
+    return normalizeScheduleClock(num, fallback);
+  }
+  return fallback;
 };
 
-export const setStreamingLightTime = async (on: number, off: number): Promise<void> => {
-  const timeRef = ref(db, 'streaming/config/light_time/on');
-  await set(timeRef, on);
-
-  const timeRef2 = ref(db, 'streaming/config/light_time/off');
-  await set(timeRef2, off);
+export const setStreamingIrrigationTime = async (times: {
+  time1?: number | string;
+  time2?: number | string;
+  time3?: number | string | null;
+}): Promise<void> => {
+  const payload: Record<string, number | string> = {};
+  if (times.time1 !== undefined && times.time1 !== '') {
+    payload.time1 = typeof times.time1 === 'number' ? normalizeScheduleClock(times.time1, '06:00') : times.time1;
+  }
+  if (times.time2 !== undefined && times.time2 !== '') {
+    payload.time2 = typeof times.time2 === 'number' ? normalizeScheduleClock(times.time2, '17:00') : times.time2;
+  }
+  if (times.time3 !== undefined && times.time3 !== null && String(times.time3).trim() !== '') {
+    payload.time3 = typeof times.time3 === 'number' ? normalizeScheduleClock(times.time3, '12:00') : times.time3;
+  }
+  await set(ref(db, 'streaming/config/irrigation_time'), payload);
 };
 
-export const getControlDeviceStatus = (device: StreamingControlDevice | number | boolean): { status: boolean; daily_time: number; last_on_time: string } => {
+export const setStreamingLightTime = async (
+  on: number | string,
+  off: number | string,
+  extra?: { on2?: string | null; off2?: string | null },
+): Promise<void> => {
+  const payload: LightScheduleConfig = {
+    mode: 'window',
+    on: typeof on === 'number' ? normalizeScheduleClock(on, '06:00') : on,
+    off: typeof off === 'number' ? normalizeScheduleClock(off, '18:00') : off,
+  };
+  if (extra?.on2 && extra?.off2) {
+    payload.on2 = extra.on2;
+    payload.off2 = extra.off2;
+  }
+  await set(ref(db, 'streaming/config/light_time'), payload);
+};
+
+export const setStreamingLightSlots = async (
+  slots: { time1: string; time2?: string | null; time3?: string | null },
+  durationMin: number,
+): Promise<void> => {
+  const payload: LightScheduleConfig = {
+    mode: 'slots',
+    time1: normalizeScheduleClock(slots.time1, '06:00'),
+  };
+  if (slots.time2 && slots.time2.trim()) {
+    payload.time2 = normalizeScheduleClock(slots.time2, '18:00');
+  }
+  if (slots.time3 && slots.time3.trim()) {
+    payload.time3 = normalizeScheduleClock(slots.time3, '21:00');
+  }
+  const validDur = Math.min(720, Math.max(1, Math.round(durationMin)));
+  await Promise.all([
+    set(ref(db, 'streaming/config/light_time'), payload),
+    set(ref(db, 'streaming/config/light_duration_min'), validDur),
+  ]);
+};
+
+export interface ParsedControlDeviceStatus {
+  status: boolean;
+  desired: boolean;
+  actual?: boolean;
+  simulated?: boolean;
+  daily_time: number;
+  last_on_time: string;
+  updated_at?: number;
+}
+
+export const getControlDeviceStatus = (
+  device: StreamingControlDevice | number | boolean | undefined,
+  mode: 'auto' | 'schedule' | 'manual' = 'manual',
+): ParsedControlDeviceStatus => {
+  if (device === undefined || device === null) {
+    return { status: false, desired: false, daily_time: 0, last_on_time: '' };
+  }
   if (typeof device === 'number') {
-    return { status: device === 1, daily_time: 0, last_on_time: '' };
+    const on = device === 1;
+    return { status: on, desired: on, daily_time: 0, last_on_time: '' };
   }
   if (typeof device === 'boolean') {
-    return { status: device, daily_time: 0, last_on_time: '' };
+    return { status: device, desired: device, daily_time: 0, last_on_time: '' };
   }
+  const desired = device.status === true || device.status === 1;
+  const actual = typeof device.actual === 'boolean' ? device.actual : undefined;
+  const effectiveStatus = mode === 'manual' ? desired : (actual ?? false);
   return {
-    status: device.status === true || device.status === 1,
-    daily_time: device.daily_time ?? 0,
-    last_on_time: device.last_on_time ?? '',
+    status: effectiveStatus,
+    desired,
+    actual,
+    simulated: device.simulated,
+    daily_time: typeof device.daily_time === 'number' && Number.isFinite(device.daily_time) ? device.daily_time : 0,
+    last_on_time: device.last_on_time !== undefined && device.last_on_time !== null ? String(device.last_on_time) : '',
+    updated_at: typeof device.updated_at === 'number' ? device.updated_at : undefined,
   };
+};
+
+/** Định dạng tổng thời gian hoạt động trong ngày (Jetson Nano ghi theo đơn vị giờ thực). */
+export const formatDailyRuntimeVi = (hours?: number): string => {
+  if (typeof hours !== 'number' || !Number.isFinite(hours) || hours <= 0) {
+    return '0 phút';
+  }
+  const totalSec = Math.round(hours * 3600);
+  if (totalSec <= 0) return '0 phút';
+  if (totalSec < 60) return `${totalSec} giây`;
+  const totalMin = Math.round(totalSec / 60);
+  if (totalMin < 60) return `${totalMin} phút`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m > 0 ? `${h} giờ ${m} phút` : `${h} giờ`;
+};
+
+/** Định dạng mốc bật gần nhất (hỗ trợ cả chuỗi 'YYYY-MM-DD HH:MM:SS' của Jetson Nano lẫn epoch). */
+export const formatLastOnTimeVi = (raw?: string | number | null): string => {
+  if (raw === undefined || raw === null) return 'Chưa ghi nhận';
+  const s = String(raw).trim();
+  if (!s) return 'Chưa ghi nhận';
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (m) {
+    const [, yyyy, mo, dd, hh, mi, ss] = m;
+    return `${hh}:${mi}${ss ? `:${ss}` : ''} · ${dd}/${mo}/${yyyy}`;
+  }
+
+  const num = Number(s);
+  if (Number.isFinite(num) && num > 1_000_000_000) {
+    const ms = num > 1e12 ? num : num * 1000;
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) {
+      return `${d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${d.toLocaleDateString('vi-VN')}`;
+    }
+  }
+  return s;
 };
 
 export const updateStreamingThreshold = async (thresholds: StreamingConfig['config']['threshold']): Promise<void> => {
@@ -946,10 +1089,13 @@ export const MAX_SAMPLING_INTERVAL_SEC = 86400;
 export const DEFAULT_IRRIGATION_DURATION_MIN = 5;
 export const MIN_IRRIGATION_DURATION_MIN = 1;
 export const MAX_IRRIGATION_DURATION_MIN = 120;
+export const DEFAULT_LIGHT_DURATION_MIN = 120;
+export const MIN_LIGHT_DURATION_MIN = 1;
+export const MAX_LIGHT_DURATION_MIN = 720;
 
 /** Lắng nghe 1 trường trong streaming/config (null nếu chưa có / lỗi đọc). */
 export const subscribeStreamingConfigField = (
-  field: 'sampling_interval_sec' | 'irrigation_duration_min',
+  field: 'sampling_interval_sec' | 'irrigation_duration_min' | 'light_duration_min',
   callback: (value: number | null) => void,
   onError?: (error: Error) => void,
 ): Unsubscribe =>
