@@ -7,13 +7,20 @@ import threading
 from datetime import date, datetime, timedelta
 from typing import Optional, Tuple
 
+import httpx
 import pandas as pd
 
-from app.core.config import FARM_TZ, SENSOR_FIELDS, SOIL_JSON_PATH
+from app.core.config import CACHE_DIR, FARM_TZ, FIREBASE_DB_URL, SENSOR_FIELDS, SOIL_JSON_PATH
 from app.services import influx_service as ix
 
 _json_lock = threading.Lock()
 _json_df: Optional[pd.DataFrame] = None
+
+
+def invalidate_json_df_cache() -> None:
+    global _json_df
+    with _json_lock:
+        _json_df = None
 
 EVERY_MAP = {
     "raw": None, "1m": "1 minute", "5m": "5 minutes", "10m": "10 minutes", "15m": "15 minutes",
@@ -23,12 +30,39 @@ PANDAS_FREQ = {"1m": "1min", "5m": "5min", "10m": "10min", "15m": "15min", "30m"
                "1h": "1h", "3h": "3h", "6h": "6h", "1d": "1D"}
 
 
+def _read_raw_soil_json() -> dict:
+    candidates = [
+        SOIL_JSON_PATH,
+        CACHE_DIR / "soil_all.json",
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception as e:
+                print(f"[SensorData] Lỗi đọc {path}: {e}")
+
+    # Fallback cho container Render khi không có thư mục frontend/public/soil_all.json
+    with httpx.Client(timeout=35.0) as client:
+        res = client.get(f"{FIREBASE_DB_URL}/data.json")
+        res.raise_for_status()
+        fb_data = res.json() or {}
+    payload = fb_data if "data" in fb_data else {"data": fb_data}
+    try:
+        cache_path = CACHE_DIR / "soil_all.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    except Exception as e:
+        print(f"[SensorData] Không thể lưu cache soil_all.json: {e}")
+    return payload
+
+
 def load_json_df() -> pd.DataFrame:
     global _json_df
     with _json_lock:
         if _json_df is not None:
             return _json_df
-        raw = json.loads(SOIL_JSON_PATH.read_text(encoding="utf-8"))
+        raw = _read_raw_soil_json()
         data = raw.get("data", raw)
         rows = []
         for d, times in data.items():

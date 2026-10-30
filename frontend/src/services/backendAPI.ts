@@ -6,6 +6,8 @@
  * Thời gian (`t`) là chuỗi ISO có offset +07:00; mỗi điểm được bổ sung `ts` (epoch ms).
  */
 
+import { loadLocalSoilData } from './firebaseAPI';
+
 // ============================================================================
 // Hằng số dùng chung
 // ============================================================================
@@ -219,7 +221,8 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
   return failureCount < 1;
 }
 
-export const API_BASE = '/api';
+const BACKEND_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+export const API_BASE = `${BACKEND_ORIGIN}/api`;
 
 type ParamValue = string | number | boolean | undefined | null;
 
@@ -1110,6 +1113,317 @@ function parseSyncLogs(raw: unknown): SyncLogEntry[] {
 }
 
 // ============================================================================
+// Fallback trực tiếp Open-Meteo + dữ liệu cảm biến khi Backend đang Cold Start / 503
+// ============================================================================
+
+const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const OPEN_METEO_ARCHIVE_URL = 'https://archive-api.open-meteo.com/v1/archive';
+const OM_HOURLY_VARS = [
+  'temperature_2m',
+  'relative_humidity_2m',
+  'dew_point_2m',
+  'precipitation',
+  'rain',
+  'cloud_cover',
+  'shortwave_radiation',
+  'et0_fao_evapotranspiration',
+  'vapour_pressure_deficit',
+  'wind_speed_10m',
+  'surface_pressure',
+];
+const OM_CURRENT_VARS = [
+  'temperature_2m',
+  'relative_humidity_2m',
+  'apparent_temperature',
+  'precipitation',
+  'rain',
+  'cloud_cover',
+  'wind_speed_10m',
+  'wind_direction_10m',
+  'weather_code',
+  'is_day',
+  'surface_pressure',
+  'shortwave_radiation',
+];
+const OM_DAILY_VARS = [
+  'temperature_2m_max',
+  'temperature_2m_min',
+  'precipitation_sum',
+  'precipitation_probability_max',
+  'et0_fao_evapotranspiration',
+  'shortwave_radiation_sum',
+  'weather_code',
+];
+
+let cachedOpenMeteoPayload: { at: number; data: Obj } | null = null;
+
+async function fetchOpenMeteoForecastRaw(signal?: AbortSignal): Promise<Obj> {
+  if (cachedOpenMeteoPayload && Date.now() - cachedOpenMeteoPayload.at < 5 * 60_000) {
+    return cachedOpenMeteoPayload.data;
+  }
+  const qs = new URLSearchParams({
+    latitude: String(FARM_LOCATION.lat),
+    longitude: String(FARM_LOCATION.lon),
+    hourly: [...OM_HOURLY_VARS, 'soil_temperature_6cm', 'soil_moisture_3_to_9cm', 'precipitation_probability'].join(','),
+    daily: OM_DAILY_VARS.join(','),
+    current: OM_CURRENT_VARS.join(','),
+    past_days: '92',
+    forecast_days: '16',
+    timezone: 'Asia/Ho_Chi_Minh',
+  });
+  const res = await fetch(`${OPEN_METEO_FORECAST_URL}?${qs.toString()}`, { signal });
+  if (!res.ok) throw new Error(`Open-Meteo HTTP ${res.status}`);
+  const data = (await res.json()) as Obj;
+  cachedOpenMeteoPayload = { at: Date.now(), data };
+  return data;
+}
+
+function normalizeOpenMeteoHourly(hourlyObj: unknown): WeatherHourly[] {
+  if (!isObj(hourlyObj)) return [];
+  const normalized: Obj = { ...hourlyObj };
+  if (normalized.soil_temperature_6cm && !normalized.soil_temperature) {
+    normalized.soil_temperature = normalized.soil_temperature_6cm;
+  }
+  if (normalized.soil_moisture_3_to_9cm && !normalized.soil_moisture) {
+    normalized.soil_moisture = normalized.soil_moisture_3_to_9cm;
+  }
+  if (normalized.soil_temperature_0_to_7cm && !normalized.soil_temperature) {
+    normalized.soil_temperature = normalized.soil_temperature_0_to_7cm;
+  }
+  if (normalized.soil_moisture_0_to_7cm && !normalized.soil_moisture) {
+    normalized.soil_moisture = normalized.soil_moisture_0_to_7cm;
+  }
+  return parseTimeRows(normalized);
+}
+
+function computeNext24hSummary(hourly: WeatherHourly[], nowMs: number): WeatherNext24h {
+  const nxt = hourly.filter((r) => r.ts >= nowMs && r.ts < nowMs + 24 * 3600_000);
+  if (!nxt.length) return {};
+  const vals = (k: string) => nxt.map((r) => num(r[k])).filter((v): v is number => v !== undefined);
+  const sum = (arrNum: number[]) => arrNum.reduce((a, b) => a + b, 0);
+  const mean = (arrNum: number[]) => (arrNum.length ? sum(arrNum) / arrNum.length : undefined);
+  const precip = vals('precipitation');
+  const prob = vals('precipitation_probability');
+  const temps = vals('temperature_2m');
+  const rh = vals('relative_humidity_2m');
+  const et0 = vals('et0_fao_evapotranspiration');
+  const rad = vals('shortwave_radiation');
+  return {
+    precip_total_mm: precip.length ? Number(sum(precip).toFixed(1)) : undefined,
+    precip_prob_max: prob.length ? Math.round(Math.max(...prob)) : undefined,
+    rain_hours: precip.filter((p) => p > 0.1).length,
+    temp_min: temps.length ? Number(Math.min(...temps).toFixed(1)) : undefined,
+    temp_max: temps.length ? Number(Math.max(...temps).toFixed(1)) : undefined,
+    rh_mean: rh.length ? Math.round(mean(rh)!) : undefined,
+    et0_total_mm: et0.length ? Number(sum(et0).toFixed(2)) : undefined,
+    radiation_mean: rad.length ? Math.round(mean(rad)!) : undefined,
+  };
+}
+
+async function fallbackSensorHistory(p: { start: string; end: string; every?: string; fields?: string[] }): Promise<HistoryResponse> {
+  const soil = await loadLocalSoilData();
+  if (!soil) return { every: p.every ?? '1h', fields: p.fields, points: [] };
+  const startMs = toMs(p.start) ?? 0;
+  const endMs = toMs(p.end) ?? Date.now();
+  const bucketMs = p.every === '1d' ? 86400_000 : p.every === '5m' ? 300_000 : 3600_000;
+  const wantedFields = p.fields?.length ? p.fields : TARGETS.map((t) => t.key);
+
+  const buckets = new Map<number, Record<string, { sum: number; n: number }>>();
+  for (const [day, times] of Object.entries(soil)) {
+    if (!times || typeof times !== 'object') continue;
+    for (const [clock, rec] of Object.entries(times)) {
+      const ts = toMs(`${day}T${clock.length === 5 ? `${clock}:00` : clock}+07:00`);
+      if (ts === undefined || ts < startMs || ts > endMs) continue;
+      const b = Math.floor(ts / bucketMs) * bucketMs;
+      let bObj = buckets.get(b);
+      if (!bObj) {
+        bObj = {};
+        buckets.set(b, bObj);
+      }
+      for (const f of wantedFields) {
+        const v = num((rec as unknown as Obj)[f]);
+        if (v !== undefined) {
+          const stat = bObj[f] ?? { sum: 0, n: 0 };
+          stat.sum += v;
+          stat.n += 1;
+          bObj[f] = stat;
+        }
+      }
+    }
+  }
+  const points: HistoryPoint[] = [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, statsObj]) => {
+      const pt: HistoryPoint = { t: vnIsoString(ts), ts };
+      for (const [f, st] of Object.entries(statsObj)) {
+        if (st.n > 0) pt[f] = Number((st.sum / st.n).toFixed(2));
+      }
+      return pt;
+    });
+  return { every: p.every ?? '1h', fields: wantedFields, points };
+}
+
+function rankArray(vals: number[]): number[] {
+  const indexed = vals.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+  const ranks = new Array<number>(vals.length);
+  for (let i = 0; i < indexed.length; i++) ranks[indexed[i].i] = i + 1;
+  return ranks;
+}
+
+function pearsonCorr(xs: number[], ys: number[]): number | null {
+  const n = xs.length;
+  if (n < 24) return null;
+  let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+  const mx = sx / n, my = sy / n;
+  let numCov = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    numCov += dx * dy;
+    dx2 += dx * dx;
+    dy2 += dy * dy;
+  }
+  const denom = Math.sqrt(dx2 * dy2);
+  return denom > 1e-12 ? Number((numCov / denom).toFixed(4)) : null;
+}
+
+async function fallbackWeatherCorrelation(p: {
+  days: number;
+  method: 'pearson' | 'spearman';
+  max_lag_h?: number;
+}): Promise<CorrelationResponse> {
+  const soil = await loadLocalSoilData();
+  if (!soil) throw new BackendError('No sensor data', 404, 'not_found', 'Chưa có dữ liệu cảm biến');
+  const dates = Object.keys(soil).sort();
+  const lastDateStr = dates[dates.length - 1];
+  const endMs = (toMs(`${lastDateStr}T23:59:59+07:00`) ?? Date.now());
+  const startMs = endMs - p.days * 86400_000;
+  const startDate = vnDateString(startMs);
+  const endDate = vnDateString(endMs);
+
+  const [weatherRes, sensorHist] = await Promise.all([
+    backendAPI.getWeatherHistory({ start: startDate, end: endDate }),
+    fallbackSensorHistory({ start: vnIsoString(startMs), end: vnIsoString(endMs), every: '1h' }),
+  ]);
+
+  const wVars = [
+    'temperature_2m',
+    'relative_humidity_2m',
+    'precipitation',
+    'cloud_cover',
+    'shortwave_radiation',
+    'et0_fao_evapotranspiration',
+    'vapour_pressure_deficit',
+    'wind_speed_10m',
+    'soil_temperature',
+    'soil_moisture',
+  ];
+  const sVars = TARGETS.map((t) => t.key);
+
+  const wByHour = new Map<number, WeatherHourly>();
+  for (const r of weatherRes.hourly) {
+    wByHour.set(Math.floor(r.ts / 3600_000) * 3600_000, r);
+  }
+  const sByHour = new Map<number, HistoryPoint>();
+  for (const pt of sensorHist.points) {
+    sByHour.set(Math.floor(pt.ts / 3600_000) * 3600_000, pt);
+  }
+
+  const commonHours = [...sByHour.keys()].filter((h) => wByHour.has(h)).sort((a, b) => a - b);
+  const maxLag = p.max_lag_h ?? 24;
+
+  const computeR = (xs: number[], ys: number[]) =>
+    p.method === 'spearman' ? pearsonCorr(rankArray(xs), rankArray(ys)) : pearsonCorr(xs, ys);
+
+  const matrix: (number | null)[][] = [];
+  const bestLagMat: (number | null)[][] = [];
+  const bestCorrMat: (number | null)[][] = [];
+
+  for (const w of wVars) {
+    const row: (number | null)[] = [];
+    const lrow: (number | null)[] = [];
+    const crow: (number | null)[] = [];
+    for (const s of sVars) {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      for (const h of commonHours) {
+        const wv = num(wByHour.get(h)?.[w]);
+        const sv = num(sByHour.get(h)?.[s]);
+        if (wv !== undefined && sv !== undefined) {
+          xs.push(wv);
+          ys.push(sv);
+        }
+      }
+      const r0 = computeR(xs, ys);
+      row.push(r0);
+      if (r0 === null) {
+        lrow.push(null);
+        crow.push(null);
+        continue;
+      }
+      let bestL = 0;
+      let bestC = r0;
+      for (let lag = 1; lag <= maxLag; lag++) {
+        const lxs: number[] = [];
+        const lys: number[] = [];
+        for (const h of commonHours) {
+          const wv = num(wByHour.get(h)?.[w]);
+          const sv = num(sByHour.get(h + lag * 3600_000)?.[s]);
+          if (wv !== undefined && sv !== undefined) {
+            lxs.push(wv);
+            lys.push(sv);
+          }
+        }
+        const rl = computeR(lxs, lys);
+        if (rl !== null && Math.abs(rl) > Math.abs(bestC)) {
+          bestL = lag;
+          bestC = rl;
+        }
+      }
+      lrow.push(bestL);
+      crow.push(bestC);
+    }
+    matrix.push(row);
+    bestLagMat.push(lrow);
+    bestCorrMat.push(crow);
+  }
+
+  const insights: string[] = [];
+  const rankedPairs: { abs: number; r: number; w: string; s: string; lag: number | null; rc: number | null }[] = [];
+  for (let i = 0; i < wVars.length; i++) {
+    for (let j = 0; j < sVars.length; j++) {
+      const r = matrix[i][j];
+      if (r !== null && Math.abs(r) >= 0.25) {
+        rankedPairs.push({ abs: Math.abs(r), r, w: wVars[i], s: sVars[j], lag: bestLagMat[i][j], rc: bestCorrMat[i][j] });
+      }
+    }
+  }
+  rankedPairs.sort((a, b) => b.abs - a.abs);
+  for (const item of rankedPairs.slice(0, 5)) {
+    const dir = item.r > 0 ? 'thuận' : 'nghịch';
+    const strength = item.abs >= 0.8 ? 'rất mạnh' : item.abs >= 0.6 ? 'mạnh' : item.abs >= 0.4 ? 'trung bình' : 'yếu';
+    let txt = `${weatherVarLabel(item.w)} tương quan ${dir} ${strength} với ${targetLabel(item.s)} (r = ${item.r.toFixed(2)})`;
+    if (item.lag && item.rc !== null && Math.abs(item.rc) > item.abs + 0.02) {
+      txt += `; mạnh nhất khi trễ ${item.lag} giờ (r = ${item.rc.toFixed(2)})`;
+    }
+    insights.push(`${txt}.`);
+  }
+
+  return {
+    method: p.method,
+    days: p.days,
+    variables_weather: wVars,
+    variables_sensor: sVars,
+    matrix,
+    lag: { best_lag_h: bestLagMat, best_corr: bestCorrMat },
+    n: commonHours.length,
+    max_lag_h: maxLag,
+    insights,
+  };
+}
+
+// ============================================================================
 // Public API functions
 // ============================================================================
 
@@ -1160,25 +1474,77 @@ export const backendAPI = {
 
   // ---- Weather ----
   async getWeatherCurrent(signal?: AbortSignal): Promise<WeatherResponse> {
-    return parseWeather(await get('/weather/current', undefined, signal));
+    try {
+      return parseWeather(await get('/weather/current', undefined, signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      const raw = await fetchOpenMeteoForecastRaw(signal);
+      const hourlyAll = normalizeOpenMeteoHourly(raw.hourly);
+      const nowMs = Date.now();
+      const hourly = hourlyAll.filter((r) => r.ts >= nowMs - 12 * 3600_000 && r.ts <= nowMs + 48 * 3600_000);
+      return parseWeather({
+        ...raw,
+        location: FARM_LOCATION,
+        hourly,
+        next24h: computeNext24hSummary(hourlyAll, nowMs),
+      });
+    }
   },
 
   /** start/end: 'YYYY-MM-DD' */
   async getWeatherHistory(p: { start: string; end: string }, signal?: AbortSignal): Promise<WeatherResponse> {
-    return parseWeather(await get('/weather/history', { start: p.start, end: p.end }, signal));
+    try {
+      return parseWeather(await get('/weather/history', { start: p.start, end: p.end }, signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      const startMs = toMs(p.start) ?? 0;
+      const endMs = (toMs(p.end) ?? Date.now()) + 86400_000;
+      const raw = await fetchOpenMeteoForecastRaw(signal);
+      let hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= startMs && r.ts < endMs && r.ts <= Date.now());
+      if (!hourly.length) {
+        const qs = new URLSearchParams({
+          latitude: String(FARM_LOCATION.lat),
+          longitude: String(FARM_LOCATION.lon),
+          start_date: p.start,
+          end_date: p.end,
+          hourly: [...OM_HOURLY_VARS, 'soil_temperature_0_to_7cm', 'soil_moisture_0_to_7cm'].join(','),
+          timezone: 'Asia/Ho_Chi_Minh',
+        });
+        const archRes = await fetch(`${OPEN_METEO_ARCHIVE_URL}?${qs.toString()}`, { signal });
+        if (archRes.ok) {
+          const archJson = (await archRes.json()) as Obj;
+          hourly = normalizeOpenMeteoHourly(archJson.hourly);
+        }
+      }
+      return { location: FARM_LOCATION, timezone: 'Asia/Ho_Chi_Minh', hourly, daily: [] };
+    }
   },
 
   async getWeatherForecast(days: number, signal?: AbortSignal): Promise<WeatherResponse> {
-    return parseWeather(await get('/weather/forecast', { days }, signal));
+    try {
+      return parseWeather(await get('/weather/forecast', { days }, signal));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      const raw = await fetchOpenMeteoForecastRaw(signal);
+      const nowMs = Math.floor(Date.now() / 3600_000) * 3600_000;
+      const hourly = normalizeOpenMeteoHourly(raw.hourly).filter((r) => r.ts >= nowMs && r.ts < nowMs + days * 86400_000);
+      const daily = parseTimeRows(raw.daily).filter((d) => d.ts >= nowMs - 86400_000).slice(0, days);
+      return { location: FARM_LOCATION, timezone: 'Asia/Ho_Chi_Minh', hourly, daily };
+    }
   },
 
   async getWeatherCorrelation(
     p: { days: number; method: 'pearson' | 'spearman'; max_lag_h?: number },
     signal?: AbortSignal,
   ): Promise<CorrelationResponse> {
-    return parseCorrelation(
-      await get('/weather/correlation', { days: p.days, method: p.method, max_lag_h: p.max_lag_h ?? 24 }, signal),
-    );
+    try {
+      return parseCorrelation(
+        await get('/weather/correlation', { days: p.days, method: p.method, max_lag_h: p.max_lag_h ?? 24 }, signal),
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      return fallbackWeatherCorrelation(p);
+    }
   },
 
   // ---- Sensor history ----
@@ -1187,13 +1553,18 @@ export const backendAPI = {
     p: { start: string; end: string; every?: string; fields?: string[] },
     signal?: AbortSignal,
   ): Promise<HistoryResponse> {
-    return parseHistory(
-      await get(
-        '/history',
-        { start: p.start, end: p.end, every: p.every ?? '5m', fields: p.fields?.length ? p.fields.join(',') : undefined },
-        signal,
-      ),
-    );
+    try {
+      return parseHistory(
+        await get(
+          '/history',
+          { start: p.start, end: p.end, every: p.every ?? '5m', fields: p.fields?.length ? p.fields.join(',') : undefined },
+          signal,
+        ),
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      return fallbackSensorHistory(p);
+    }
   },
 
   // ---- Sync ----

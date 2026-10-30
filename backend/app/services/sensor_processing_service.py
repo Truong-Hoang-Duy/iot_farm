@@ -10,7 +10,9 @@ from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
+from app.core.config import CACHE_DIR
 from app.services.firebase_service import FIREBASE_DB_URL
+from app.services.sensor_data_service import invalidate_json_df_cache
 
 VN_TZ = timezone(timedelta(hours=7))
 
@@ -30,6 +32,7 @@ FEATURE_COLUMNS = [
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 LOCAL_JSON_PATHS = [
+    CACHE_DIR / "soil_all.json",
     PROJECT_ROOT / "visualization" / "soil_all.json",
     PROJECT_ROOT / "frontend" / "public" / "soil_all.json",
     PROJECT_ROOT / "frontend" / "soil_all.json",
@@ -52,10 +55,12 @@ async def sync_soil_all_from_firebase() -> Dict[str, Any]:
     payload = {"data": fb_data} if "data" not in fb_data else fb_data
     _raw_payload_cache = payload
     _processed_cache.clear()
+    invalidate_json_df_cache()
     _last_firebase_sync_date = datetime.now(VN_TZ).strftime("%Y-%m-%d")
 
     saved_paths: List[str] = []
     target_paths = [
+        CACHE_DIR / "soil_all.json",
         PROJECT_ROOT / "frontend" / "public" / "soil_all.json",
         PROJECT_ROOT / "visualization" / "soil_all.json",
     ]
