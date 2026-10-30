@@ -1,6 +1,6 @@
 // Firebase API (Controls & Config) + Backend Sensor API (/api/sensors/*)
 import { db } from '../config/firebaseConfig';
-import { ref, get, set, onValue, update, remove, type Unsubscribe } from 'firebase/database';
+import { ref, get, set, onValue, update, remove, query, limitToLast, type Unsubscribe } from 'firebase/database';
 
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
@@ -190,22 +190,55 @@ export interface BackendStagesSummaryResponse {
 }
 
 let cachedSoilData: FirebaseSensorData | null = null;
+let cachedSoilDataAt = 0;
 let cachedStagesSummary: BackendStagesSummaryResponse | null = null;
+let cachedStagesSummaryAt = 0;
 let loadPromise: Promise<FirebaseSensorData | null> | null = null;
+const SENSOR_CACHE_TTL_MS = 15_000;
+
+function normalizeDayReadings(
+  rawDay: Record<string, any> | undefined | null
+): Record<string, FirebaseSensorReading> {
+  const out: Record<string, FirebaseSensorReading> = {};
+  if (!rawDay || typeof rawDay !== 'object') return out;
+  for (const [clock, val] of Object.entries(rawDay)) {
+    if (!val || typeof val !== 'object') continue;
+    const normClock = clock.length >= 5 ? clock.slice(0, 5) : clock;
+    out[normClock] = {
+      EC: Number(val.EC ?? 0),
+      K: Number(val.K ?? 0),
+      N: Number(val.N ?? 0),
+      P: Number(val.P ?? 0),
+      humidity: Number(val.humidity ?? 0),
+      moisture: Number(val.moisture ?? 0),
+      pH: Number(val.pH ?? 0),
+      soiltemp: Number(val.soiltemp ?? 0),
+      temperature: Number(val.temperature ?? 0),
+    };
+  }
+  return out;
+}
 
 // Gọi Backend API (/api/sensors/data trong backend/app/api/sensors.py) để lấy dữ liệu cảm biến đã xử lý làm sạch
 export const loadProcessedSensorDataFromBackend = async (
-  method: string = 'ffill'
+  method: string = 'ffill',
+  forceRefresh: boolean = false
 ): Promise<FirebaseSensorData | null> => {
-  if (cachedSoilData) return cachedSoilData;
-  if (loadPromise) return loadPromise;
+  const now = Date.now();
+  if (!forceRefresh && cachedSoilData && now - cachedSoilDataAt < SENSOR_CACHE_TTL_MS) {
+    return cachedSoilData;
+  }
+  if (loadPromise && !forceRefresh) return loadPromise;
 
   loadPromise = (async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/sensors/data?method=${encodeURIComponent(method)}`);
+      const res = await fetch(
+        `${API_BASE}/api/sensors/data?method=${encodeURIComponent(method)}${forceRefresh ? '&refresh=true' : ''}`
+      );
       if (res.ok) {
         const json = await res.json();
         cachedSoilData = (json.data || json) as FirebaseSensorData;
+        cachedSoilDataAt = Date.now();
         if (json.summary && json.stage_averages && json.pipeline_info) {
           cachedStagesSummary = {
             latest: json.latest,
@@ -213,6 +246,7 @@ export const loadProcessedSensorDataFromBackend = async (
             stage_averages: json.stage_averages,
             pipeline_info: json.pipeline_info,
           };
+          cachedStagesSummaryAt = Date.now();
         }
         return cachedSoilData;
       } else {
@@ -223,7 +257,7 @@ export const loadProcessedSensorDataFromBackend = async (
     } finally {
       loadPromise = null;
     }
-    return null;
+    return cachedSoilData;
   })();
 
   return loadPromise;
@@ -231,16 +265,26 @@ export const loadProcessedSensorDataFromBackend = async (
 
 // Gọi Backend API (/api/sensors/stages-summary trong backend/app/api/sensors.py) để lấy kết quả chuẩn hóa 6 giai đoạn & thông tin điền khuyết
 export const fetchProcessedStagesSummary = async (
-  method: string = 'ffill'
+  method: string = 'ffill',
+  forceRefresh: boolean = false
 ): Promise<BackendStagesSummaryResponse | null> => {
-  if (cachedStagesSummary && cachedStagesSummary.pipeline_info.imputation_method === method) {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    cachedStagesSummary &&
+    cachedStagesSummary.pipeline_info.imputation_method === method &&
+    now - cachedStagesSummaryAt < SENSOR_CACHE_TTL_MS
+  ) {
     return cachedStagesSummary;
   }
   try {
-    const res = await fetch(`${API_BASE}/api/sensors/stages-summary?method=${encodeURIComponent(method)}`);
+    const res = await fetch(
+      `${API_BASE}/api/sensors/stages-summary?method=${encodeURIComponent(method)}${forceRefresh ? '&refresh=true' : ''}`
+    );
     if (res.ok) {
       const data = (await res.json()) as BackendStagesSummaryResponse;
       cachedStagesSummary = data;
+      cachedStagesSummaryAt = Date.now();
       return data;
     }
   } catch (err) {
@@ -251,7 +295,6 @@ export const fetchProcessedStagesSummary = async (
 
 // Lấy toàn bộ dữ liệu cảm biến đã qua làm sạch từ Backend (/api/sensors/data)
 export const getSensorData = async (): Promise<FirebaseSensorData> => {
-  if (cachedSoilData) return cachedSoilData;
   const backendData = await loadProcessedSensorDataFromBackend('ffill');
   if (backendData) return backendData;
   throw new Error('Không thể tải dữ liệu cảm biến đã xử lý từ Backend (/api/sensors/data)');
@@ -292,18 +335,57 @@ export const getLatestSensorReading = async (): Promise<{
   };
 };
 
-// Đăng ký nhận dữ liệu cảm biến đã làm sạch từ Backend (/api/sensors/data)
+// Đăng ký nhận dữ liệu cảm biến đã làm sạch từ Backend (/api/sensors/data) kết hợp lắng nghe 2 ngày mới nhất trên Firebase
 export const subscribeSensorData = (callback: (data: FirebaseSensorData) => void) => {
   let isCancelled = false;
+  let latestFirebaseDays: FirebaseSensorData = {};
+
+  const emitMerged = (base: FirebaseSensorData | null) => {
+    if (isCancelled) return;
+    if (!base && Object.keys(latestFirebaseDays).length === 0) return;
+    const merged: FirebaseSensorData = { ...(base || {}) };
+    for (const [day, dayMap] of Object.entries(latestFirebaseDays)) {
+      merged[day] = {
+        ...(merged[day] || {}),
+        ...dayMap,
+      };
+    }
+    cachedSoilData = merged;
+    callback(merged);
+  };
 
   loadProcessedSensorDataFromBackend('ffill').then((backendData) => {
     if (backendData && !isCancelled) {
-      callback(backendData);
+      emitMerged(backendData);
     }
   });
 
+  const recentRef = query(ref(db, 'data'), limitToLast(2));
+  const unsubFirebase = onValue(
+    recentRef,
+    (snapshot) => {
+      if (isCancelled || !snapshot.exists()) return;
+      const rawVal = snapshot.val() as Record<string, Record<string, any>>;
+      const normalized: FirebaseSensorData = {};
+      for (const [day, rawDay] of Object.entries(rawVal || {})) {
+        const dayReadings = normalizeDayReadings(rawDay);
+        if (Object.keys(dayReadings).length > 0) {
+          normalized[day] = dayReadings;
+        }
+      }
+      latestFirebaseDays = normalized;
+      if (cachedSoilData) {
+        emitMerged(cachedSoilData);
+      }
+    },
+    (err) => {
+      console.warn('[SensorAPI] Không thể lắng nghe ngày mới trên Firebase /data:', err);
+    }
+  );
+
   return () => {
     isCancelled = true;
+    unsubFirebase();
   };
 };
 

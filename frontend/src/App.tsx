@@ -23,7 +23,7 @@ function AppRoutes() {
       <Route path="/" element={<Layout><Dashboard /></Layout>} />
       <Route path="/plant" element={<Layout><PlantInfo /></Layout>} />
       <Route path="/alerts" element={<Layout><Alerts /></Layout>} />
-      <Route path="/controls" element={<Layout><Controls /></Layout>} />
+      <Route path="/controls" element={<Navigate to="/settings?tab=controls" replace />} />
       <Route path="/recommendations" element={<Navigate to="/alerts" replace />} />
       <Route path="/weather" element={<Layout><Weather /></Layout>} />
       <Route path="/model-lab" element={<Layout><ModelLab /></Layout>} />

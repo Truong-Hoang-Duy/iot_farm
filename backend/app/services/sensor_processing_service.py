@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -41,23 +42,11 @@ LOCAL_JSON_PATHS = [
 _processed_cache: Dict[str, Dict[str, Any]] = {}
 _raw_payload_cache: Optional[Dict[str, Any]] = None
 _last_firebase_sync_date: Optional[str] = None
+_last_firebase_sync_ts: float = 0.0
+_FIREBASE_CHECK_TTL_SEC = 15.0
 
 
-async def sync_soil_all_from_firebase() -> Dict[str, Any]:
-    """Kéo toàn bộ dữ liệu /data từ Firebase về lưu vào file soil_all.json và làm mới bộ nhớ đệm."""
-    global _raw_payload_cache, _processed_cache, _last_firebase_sync_date
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        res = await client.get(f"{FIREBASE_DB_URL}/data.json")
-        if res.status_code != 200 or not res.json():
-            raise RuntimeError(f"Firebase trả về HTTP {res.status_code} hoặc dữ liệu rỗng.")
-        fb_data = res.json()
-
-    payload = {"data": fb_data} if "data" not in fb_data else fb_data
-    _raw_payload_cache = payload
-    _processed_cache.clear()
-    invalidate_json_df_cache()
-    _last_firebase_sync_date = datetime.now(VN_TZ).strftime("%Y-%m-%d")
-
+def _save_payload_to_local_files(payload: Dict[str, Any]) -> List[str]:
     saved_paths: List[str] = []
     target_paths = [
         CACHE_DIR / "soil_all.json",
@@ -66,12 +55,79 @@ async def sync_soil_all_from_firebase() -> Dict[str, Any]:
     ]
     for path in target_paths:
         try:
-            if path.parent.exists():
-                with path.open("w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-                saved_paths.append(str(path))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            saved_paths.append(str(path))
         except Exception as e:
             print(f"[SensorProcessing] Không thể ghi {path}: {e}")
+    return saved_paths
+
+
+def merge_latest_days_from_firebase_sync(payload: Dict[str, Any]) -> bool:
+    """Kiểm tra danh sách ngày trên Firebase (?shallow=true) và kéo bổ sung các ngày mới / 2 ngày gần nhất."""
+    data_node = payload.setdefault("data", {})
+    changed = False
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            res = client.get(f"{FIREBASE_DB_URL}/data.json?shallow=true")
+            if res.status_code != 200 or not isinstance(res.json(), dict):
+                return False
+            fb_days = sorted(res.json().keys())
+            if not fb_days:
+                return False
+            recent_days = set(fb_days[-2:])
+            missing_or_recent = [d for d in fb_days if d not in data_node or d in recent_days]
+            for d in missing_or_recent:
+                day_res = client.get(f"{FIREBASE_DB_URL}/data/{d}.json")
+                if day_res.status_code == 200 and isinstance(day_res.json(), dict):
+                    new_records = day_res.json()
+                    if data_node.get(d) != new_records:
+                        data_node[d] = new_records
+                        changed = True
+    except Exception as e:
+        print(f"[SensorProcessing] Không thể đồng bộ nhanh ngày mới từ Firebase: {e}")
+        return False
+
+    if changed:
+        _save_payload_to_local_files(payload)
+    return changed
+
+
+async def sync_soil_all_from_firebase() -> Dict[str, Any]:
+    """Kéo dữ liệu mới từ Firebase về lưu vào file soil_all.json và làm mới bộ nhớ đệm."""
+    global _raw_payload_cache, _processed_cache, _sync_df_cache, _last_firebase_sync_date, _last_firebase_sync_ts
+    if _raw_payload_cache is None:
+        for path in LOCAL_JSON_PATHS:
+            if path.exists():
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
+                        break
+                except Exception:
+                    pass
+
+    if _raw_payload_cache is not None:
+        from fastapi.concurrency import run_in_threadpool
+
+        await run_in_threadpool(merge_latest_days_from_firebase_sync, _raw_payload_cache)
+        payload = _raw_payload_cache
+    else:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            res = await client.get(f"{FIREBASE_DB_URL}/data.json")
+            if res.status_code != 200 or not res.json():
+                raise RuntimeError(f"Firebase trả về HTTP {res.status_code} hoặc dữ liệu rỗng.")
+            fb_data = res.json()
+        payload = {"data": fb_data} if "data" not in fb_data else fb_data
+        _raw_payload_cache = payload
+        _save_payload_to_local_files(payload)
+
+    _processed_cache.clear()
+    _sync_df_cache.clear()
+    invalidate_json_df_cache()
+    _last_firebase_sync_date = datetime.now(VN_TZ).strftime("%Y-%m-%d")
+    _last_firebase_sync_ts = time.time()
 
     days = sorted(payload.get("data", {}).keys())
     return {
@@ -80,40 +136,47 @@ async def sync_soil_all_from_firebase() -> Dict[str, Any]:
         "total_days": len(days),
         "first_date": days[0] if days else None,
         "last_date": days[-1] if days else None,
-        "saved_paths": saved_paths,
     }
 
 
 async def fetch_raw_sensor_payload(force_refresh: bool = False) -> Dict[str, Any]:
-    """Đọc dữ liệu cảm biến từ Firebase Realtime Database (/data) hoặc bản lưu cục bộ."""
-    global _raw_payload_cache, _last_firebase_sync_date
+    """Đọc dữ liệu cảm biến từ Firebase Realtime Database (/data) hoặc bản lưu cục bộ (kèm đồng bộ ngày mới)."""
+    global _raw_payload_cache, _last_firebase_sync_date, _last_firebase_sync_ts
     today_vn = datetime.now(VN_TZ).strftime("%Y-%m-%d")
+    now_ts = time.time()
 
-    # Nếu đã sang ngày mới (qua 0h đêm), tự động kéo dữ liệu mới từ Firebase về cập nhật soil_all.json
+    # Nếu đã sang ngày mới hoặc quá TTL kiểm tra nhanh, kiểm tra bản ghi mới trên Firebase
     if _last_firebase_sync_date is not None and _last_firebase_sync_date != today_vn:
         force_refresh = True
 
     if _raw_payload_cache is not None and not force_refresh:
+        if now_ts - _last_firebase_sync_ts > _FIREBASE_CHECK_TTL_SEC:
+            from fastapi.concurrency import run_in_threadpool
+
+            _last_firebase_sync_ts = now_ts
+            changed = await run_in_threadpool(merge_latest_days_from_firebase_sync, _raw_payload_cache)
+            if changed:
+                _processed_cache.clear()
+                _sync_df_cache.clear()
+                invalidate_json_df_cache()
         return _raw_payload_cache
 
-    if force_refresh:
-        try:
-            await sync_soil_all_from_firebase()
-            if _raw_payload_cache is not None:
-                return _raw_payload_cache
-        except Exception as e:
-            print(f"[SensorProcessing] Lỗi kết nối Firebase, chuyển sang đọc dữ liệu cục bộ: {e}")
+    if _raw_payload_cache is None:
+        for path in LOCAL_JSON_PATHS:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
+                    break
 
-    for path in LOCAL_JSON_PATHS:
-        if path.exists():
-            with path.open("r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                _raw_payload_cache = loaded if "data" in loaded else {"data": loaded}
-                if _last_firebase_sync_date is None:
-                    _last_firebase_sync_date = today_vn
-                return _raw_payload_cache
+    # Luôn kiểm tra và gộp các ngày mới trên Firebase (ví dụ 29/10, 30/10) vào bộ đệm
+    try:
+        await sync_soil_all_from_firebase()
+        if _raw_payload_cache is not None:
+            return _raw_payload_cache
+    except Exception as e:
+        print(f"[SensorProcessing] Firebase fallback to local cache: {type(e).__name__}")
 
-    await sync_soil_all_from_firebase()
     if _raw_payload_cache is not None:
         return _raw_payload_cache
 
@@ -131,13 +194,14 @@ def build_time_series_dataframe(payload: Dict[str, Any]) -> pd.DataFrame:
         for clock, values in readings.items():
             if not isinstance(values, dict):
                 continue
-            records.append({"timestamp_str": f"{day} {clock}", **values})
+            norm_clock = clock if len(clock) > 5 else f"{clock}:00"
+            records.append({"timestamp_str": f"{day} {norm_clock}", **values})
 
     df = pd.DataFrame.from_records(records)
     if df.empty or "timestamp_str" not in df:
         raise ValueError("Dữ liệu cảm biến không đúng định dạng data[ngày][giờ].")
 
-    df["timestamp"] = pd.to_datetime(df["timestamp_str"], errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp_str"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
     df = (
         df.dropna(subset=["timestamp"])
         .drop(columns=["timestamp_str"])
@@ -151,7 +215,15 @@ def build_time_series_dataframe(payload: Dict[str, Any]) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = np.nan
     df = df[FEATURE_COLUMNS].apply(pd.to_numeric, errors="coerce")
-    df = df.asfreq(FREQUENCY)
+
+    # Resample theo từng đoạn liên tục (tránh tạo dòng giả qua khoảng trống dài giữa các đợt đo)
+    segment_id = (df.index.to_series().diff() > pd.Timedelta(hours=24)).cumsum()
+    segments = [ seg.resample(FREQUENCY).mean() for _, seg in df.groupby(segment_id) if not seg.empty ]
+    df = pd.concat(segments) if segments else df.resample(FREQUENCY).mean()
+
+    recorded_days = {k for k, v in data_node.items() if isinstance(v, dict) and v}
+    if recorded_days:
+        df = df[df.index.strftime("%Y-%m-%d").isin(recorded_days)]
     return df
 
 
@@ -231,11 +303,11 @@ async def get_processed_sensor_bundle(
     force_refresh: bool = False,
 ) -> Dict[str, Any]:
     """Trả về dữ liệu cảm biến đã xử lý làm sạch và tổng hợp theo từng giai đoạn sinh trưởng."""
+    payload = await fetch_raw_sensor_payload(force_refresh=force_refresh)
     cache_key = f"{method}_{cap}_{smoothing}"
     if cache_key in _processed_cache and not force_refresh:
         return _processed_cache[cache_key]
 
-    payload = await fetch_raw_sensor_payload(force_refresh=force_refresh)
     df_raw = build_time_series_dataframe(payload)
 
     missing_per_col = df_raw.isna().sum().to_dict()
@@ -335,11 +407,18 @@ async def get_processed_sensor_bundle(
     return bundle
 
 
+_sync_df_cache: Dict[str, pd.DataFrame] = {}
+
+
 def get_cleaned_sensor_dataframe_sync(method: str = "ffill") -> pd.DataFrame:
     """Trả về DataFrame cảm biến đã qua bước tiền xử lý và làm sạch (phục vụ đồng bộ cho /api/sensors/history và tương quan)."""
+    global _raw_payload_cache, _last_firebase_sync_date
+    today_vn = datetime.now(VN_TZ).strftime("%Y-%m-%d")
     cache_key = f"{method}_None_False"
-    if cache_key in _processed_cache and "df_clean" in _processed_cache[cache_key]:
+    if cache_key in _processed_cache and "df_clean" in _processed_cache[cache_key] and _last_firebase_sync_date == today_vn:
         return _processed_cache[cache_key]["df_clean"].copy()
+    if method in _sync_df_cache and _last_firebase_sync_date == today_vn:
+        return _sync_df_cache[method].copy()
 
     payload_data: Optional[Dict[str, Any]] = _raw_payload_cache
     if payload_data is None:
@@ -355,9 +434,15 @@ def get_cleaned_sensor_dataframe_sync(method: str = "ffill") -> pd.DataFrame:
             res.raise_for_status()
             fb = res.json() or {}
             payload_data = fb if "data" in fb else {"data": fb}
+    else:
+        merge_latest_days_from_firebase_sync(payload_data)
 
+    _raw_payload_cache = payload_data
+    _last_firebase_sync_date = today_vn
     df_raw = build_time_series_dataframe(payload_data)
-    return impute_and_clean_dataframe(df_raw, method=method)
+    df_clean = impute_and_clean_dataframe(df_raw, method=method)
+    _sync_df_cache[method] = df_clean
+    return df_clean.copy()
 
 
 STAGE_DEFINITIONS = [

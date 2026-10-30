@@ -1,6 +1,17 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { CalendarIcon, Download, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
-import { format, parse, isAfter, isBefore, isEqual, addDays, subDays, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import {
+  format,
+  parse,
+  isAfter,
+  isBefore,
+  isEqual,
+  subDays,
+  startOfWeek,
+  endOfWeek,
+  startOfMonth,
+  endOfMonth,
+} from 'date-fns';
 import { vi } from 'date-fns/locale';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -54,13 +65,49 @@ const SENSOR_LABELS: Record<string, string> = {
 
 type DateRangeMode = 'single' | 'range';
 
-// Quick select presets
 const RANGE_PRESETS = [
-  { label: '7 ngày qua', getValue: (today: Date) => ({ from: subDays(today, 6), to: today }) },
-  { label: '14 ngày qua', getValue: (today: Date) => ({ from: subDays(today, 13), to: today }) },
-  { label: '30 ngày qua', getValue: (today: Date) => ({ from: subDays(today, 29), to: today }) },
-  { label: 'Tuần này', getValue: (today: Date) => ({ from: startOfWeek(today, { weekStartsOn: 1 }), to: endOfWeek(today, { weekStartsOn: 1 }) }) },
-  { label: 'Tháng này', getValue: (today: Date) => ({ from: startOfMonth(today), to: endOfMonth(today) }) },
+  {
+    label: '2 ngày đo gần nhất',
+    getValue: (dates: Date[], today: Date) => ({
+      from: dates.length >= 2 ? dates[dates.length - 2] : subDays(today, 1),
+      to: today,
+    }),
+  },
+  {
+    label: '7 ngày đo gần nhất',
+    getValue: (dates: Date[], today: Date) => ({
+      from: dates.length >= 7 ? dates[dates.length - 7] : subDays(today, 6),
+      to: today,
+    }),
+  },
+  {
+    label: '14 ngày đo gần nhất',
+    getValue: (dates: Date[], today: Date) => ({
+      from: dates.length >= 14 ? dates[dates.length - 14] : subDays(today, 13),
+      to: today,
+    }),
+  },
+  {
+    label: '30 ngày đo gần nhất',
+    getValue: (dates: Date[], today: Date) => ({
+      from: dates.length >= 30 ? dates[dates.length - 30] : subDays(today, 29),
+      to: today,
+    }),
+  },
+  {
+    label: 'Tuần này',
+    getValue: (_dates: Date[], today: Date) => ({
+      from: startOfWeek(today, { weekStartsOn: 1 }),
+      to: endOfWeek(today, { weekStartsOn: 1 }),
+    }),
+  },
+  {
+    label: 'Tháng này',
+    getValue: (_dates: Date[], today: Date) => ({
+      from: startOfMonth(today),
+      to: endOfMonth(today),
+    }),
+  },
 ];
 
 export default function SensorChart({ sensorData }: SensorChartProps) {
@@ -75,71 +122,91 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
     new Set(['moisture', 'soiltemp', 'pH'])
   );
 
-  // Get available dates from sensor data as Date objects
-  const availableDates = useMemo(() => {
+  const availableDateStrings = useMemo(() => {
     if (!sensorData) return [];
-    return Object.keys(sensorData).sort().map(dateStr => 
-      parse(dateStr, 'yyyy-MM-dd', new Date())
-    );
+    return Object.keys(sensorData).sort();
   }, [sensorData]);
 
-  // Set initial selected date to latest available
-  useMemo(() => {
-    if (availableDates.length > 0 && !selectedDate) {
-      setSelectedDate(availableDates[availableDates.length - 1]);
-    }
-  }, [availableDates, selectedDate]);
+  const availableDates = useMemo(() => {
+    return availableDateStrings.map((dateStr) => parse(dateStr, 'yyyy-MM-dd', new Date()));
+  }, [availableDateStrings]);
 
-  // Check if a date is available
+  const latestAvailableDateStr = availableDateStrings[availableDateStrings.length - 1] || '';
+  const prevLatestDateRef = useRef<string>('');
+
+  // Luôn tự động chọn ngày đo mới nhất khi dữ liệu tải xong hoặc có ngày mới hơn từ Firebase
+  useEffect(() => {
+    if (availableDates.length > 0 && latestAvailableDateStr !== prevLatestDateRef.current) {
+      prevLatestDateRef.current = latestAvailableDateStr;
+      const latestDateObj = availableDates[availableDates.length - 1];
+      setSelectedDate(latestDateObj);
+      const fromIdx = Math.max(0, availableDates.length - 2);
+      setDateRange({
+        from: availableDates[fromIdx],
+        to: latestDateObj,
+      });
+    }
+  }, [availableDates, latestAvailableDateStr]);
+
+  const effectiveSelectedDate =
+    selectedDate ?? (availableDates.length > 0 ? availableDates[availableDates.length - 1] : undefined);
+  const currentSelectedDateStr = effectiveSelectedDate ? format(effectiveSelectedDate, 'yyyy-MM-dd') : '';
+  const currentDateIdx = currentSelectedDateStr ? availableDateStrings.indexOf(currentSelectedDateStr) : -1;
+
+  const handleStepDate = (delta: number) => {
+    if (currentDateIdx < 0) return;
+    const nextIdx = currentDateIdx + delta;
+    if (nextIdx >= 0 && nextIdx < availableDates.length) {
+      setSelectedDate(availableDates[nextIdx]);
+    }
+  };
+
   const isDateAvailable = (date: Date) => {
-    return availableDates.some(d => 
-      d.getFullYear() === date.getFullYear() &&
-      d.getMonth() === date.getMonth() &&
-      d.getDate() === date.getDate()
+    return availableDates.some(
+      (d) =>
+        d.getFullYear() === date.getFullYear() &&
+        d.getMonth() === date.getMonth() &&
+        d.getDate() === date.getDate()
     );
   };
 
-  // Count available dates in range
   const getAvailableDatesInRange = (from: Date, to: Date) => {
-    return availableDates.filter(d => 
-      (isAfter(d, from) || isEqual(d, from)) && 
-      (isBefore(d, to) || isEqual(d, to))
+    return availableDates.filter(
+      (d) => (isAfter(d, from) || isEqual(d, from)) && (isBefore(d, to) || isEqual(d, to))
     ).length;
   };
 
-  // Process sensor data for the selected date(s)
   const chartData = useMemo(() => {
     if (!sensorData) return [];
 
     if (mode === 'single') {
-      if (!selectedDate) return [];
-      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      if (!effectiveSelectedDate) return [];
+      const dateStr = format(effectiveSelectedDate, 'yyyy-MM-dd');
       const dayData = sensorData[dateStr];
       if (!dayData) return [];
 
       const times = Object.keys(dayData).sort();
-      return times.map(time => ({
+      return times.map((time) => ({
         timestamp: time,
         ...dayData[time],
       }));
     } else {
-      // Range mode
       if (!dateRange.from || !dateRange.to) return [];
-      
+
       const result: Array<{ timestamp: string; date: string; [key: string]: any }> = [];
-      
-      // Get all dates in range that have data
-      const datesInRange = availableDates.filter(d => 
-        (isAfter(d, dateRange.from!) || isEqual(d, dateRange.from!)) && 
-        (isBefore(d, dateRange.to!) || isEqual(d, dateRange.to!))
+
+      const datesInRange = availableDates.filter(
+        (d) =>
+          (isAfter(d, dateRange.from!) || isEqual(d, dateRange.from!)) &&
+          (isBefore(d, dateRange.to!) || isEqual(d, dateRange.to!))
       );
 
-      datesInRange.forEach(date => {
+      datesInRange.forEach((date) => {
         const dateStr = format(date, 'yyyy-MM-dd');
         const dayData = sensorData[dateStr];
         if (dayData) {
           const times = Object.keys(dayData).sort();
-          times.forEach(time => {
+          times.forEach((time) => {
             result.push({
               timestamp: `${format(date, 'dd/MM')} ${time}`,
               date: dateStr,
@@ -151,7 +218,7 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
 
       return result;
     }
-  }, [sensorData, selectedDate, dateRange, mode, availableDates]);
+  }, [sensorData, effectiveSelectedDate, dateRange, mode, availableDates]);
 
   const toggleSensor = (sensor: string) => {
     const newSet = new Set(visibleSensors);
@@ -165,21 +232,20 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
 
   const handleDownload = () => {
     if (chartData.length === 0) return;
-    
+
     let fileName: string;
-    if (mode === 'single' && selectedDate) {
-      fileName = `sensor-data-${format(selectedDate, 'yyyy-MM-dd')}.xlsx`;
+    if (mode === 'single' && effectiveSelectedDate) {
+      fileName = `sensor-data-${format(effectiveSelectedDate, 'yyyy-MM-dd')}.xlsx`;
     } else if (dateRange.from && dateRange.to) {
       fileName = `sensor-data-${format(dateRange.from, 'yyyy-MM-dd')}-to-${format(dateRange.to, 'yyyy-MM-dd')}.xlsx`;
     } else {
       return;
     }
-    
-    // Prepare data for Excel
-    const excelData = chartData.map(row => {
+
+    const excelData = chartData.map((row) => {
       let formattedTime = row.timestamp;
-      if (mode === 'single' && selectedDate) {
-        formattedTime = `${row.timestamp} ${format(selectedDate, 'dd/MM/yyyy')}`;
+      if (mode === 'single' && effectiveSelectedDate) {
+        formattedTime = `${row.timestamp} ${format(effectiveSelectedDate, 'dd/MM/yyyy')}`;
       } else if (row.date) {
         const timePart = row.timestamp.includes(' ') ? row.timestamp.split(' ')[1] : row.timestamp;
         const [y, m, d] = row.date.split('-');
@@ -188,46 +254,45 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
       return {
         'Thời gian': formattedTime,
         'Độ ẩm đất (%)': row.moisture,
-      'Nhiệt độ đất (°C)': row.soiltemp,
-      'pH': row.pH,
-      'EC (mS/cm)': row.EC,
-      'N (ppm)': row.N,
-      'P (ppm)': row.P,
-      'K (ppm)': row.K,
-      'Nhiệt độ KK (°C)': row.temperature,
-      'Độ ẩm KK (%)': row.humidity,
-    };
-  });
+        'Nhiệt độ đất (°C)': row.soiltemp,
+        pH: row.pH,
+        'EC (mS/cm)': row.EC,
+        'N (ppm)': row.N,
+        'P (ppm)': row.P,
+        'K (ppm)': row.K,
+        'Nhiệt độ KK (°C)': row.temperature,
+        'Độ ẩm KK (%)': row.humidity,
+      };
+    });
 
-    // Create workbook and worksheet
     const worksheet = XLSX.utils.json_to_sheet(excelData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Sensor Data');
 
-    // Auto-fit column widths
-    const columnWidths = Object.keys(excelData[0] || {}).map(key => ({
-      wch: Math.max(key.length + 2, 12)
+    const columnWidths = Object.keys(excelData[0] || {}).map((key) => ({
+      wch: Math.max(key.length + 2, 12),
     }));
     worksheet['!cols'] = columnWidths;
 
-    // Download file
     XLSX.writeFile(workbook, fileName);
   };
 
   const handleModeChange = (newMode: DateRangeMode) => {
     setMode(newMode);
-    if (newMode === 'range' && selectedDate) {
-      setDateRange({ from: selectedDate, to: selectedDate });
+    if (newMode === 'range' && effectiveSelectedDate && (!dateRange.from || !dateRange.to)) {
+      const fromIdx = Math.max(0, availableDates.length - 2);
+      setDateRange({
+        from: availableDates[fromIdx] || effectiveSelectedDate,
+        to: effectiveSelectedDate,
+      });
     }
   };
 
-  const handlePresetClick = (preset: typeof RANGE_PRESETS[0]) => {
+  const handlePresetClick = (preset: (typeof RANGE_PRESETS)[0]) => {
     const today = availableDates[availableDates.length - 1] || new Date();
-    const { from, to } = preset.getValue(today);
-    
-    // Toggle: if same preset is selected, reset to today instead of empty
-    if (dateRange.from && dateRange.to && 
-        isEqual(from, dateRange.from) && isEqual(to, dateRange.to)) {
+    const { from, to } = preset.getValue(availableDates, today);
+
+    if (dateRange.from && dateRange.to && isEqual(from, dateRange.from) && isEqual(to, dateRange.to)) {
       setDateRange({ from: today, to: today });
     } else {
       setDateRange({ from, to });
@@ -240,37 +305,36 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
     }
   };
 
-  if (!sensorData || (mode === 'single' && chartData.length === 0 && !selectedDate)) {
-    return (
-      <div className="rounded-2xl border border-border bg-card p-6">
-        <h3 className="font-display text-xl font-semibold mb-4">
-          Biểu đồ cảm biến theo thời gian
-        </h3>
-        <div className="h-80 flex items-center justify-center text-muted-foreground">
-          Không có dữ liệu để hiển thị
-        </div>
-      </div>
-    );
-  }
+  const latestTimeInDay =
+    mode === 'single' && chartData.length > 0 ? chartData[chartData.length - 1]?.timestamp : null;
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-6">
       <div className="flex flex-col gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <h3 className="font-display text-lg sm:text-xl font-semibold">
-            Biểu đồ cảm biến
-          </h3>
-          
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h3 className="font-display text-lg sm:text-xl font-semibold">
+              Biểu đồ cảm biến
+            </h3>
+            {effectiveSelectedDate && mode === 'single' && (
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
+                Ngày đo: {format(effectiveSelectedDate, 'dd/MM/yyyy', { locale: vi })}
+                {latestTimeInDay ? ` (tới ${latestTimeInDay})` : ''}
+                {chartData.length > 0 ? ` • ${chartData.length} mẫu` : ''}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 flex-wrap">
             {/* Mode Toggle */}
             <div className="flex rounded-lg border border-border p-0.5 bg-secondary/50">
               <button
                 onClick={() => handleModeChange('single')}
                 className={cn(
-                  "px-3 py-1 text-xs font-medium rounded-md transition-all",
-                  mode === 'single' 
-                    ? "bg-background shadow-sm text-foreground" 
-                    : "text-muted-foreground hover:text-foreground"
+                  'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                  mode === 'single'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 Ngày
@@ -278,10 +342,10 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
               <button
                 onClick={() => handleModeChange('range')}
                 className={cn(
-                  "px-3 py-1 text-xs font-medium rounded-md transition-all",
-                  mode === 'range' 
-                    ? "bg-background shadow-sm text-foreground" 
-                    : "text-muted-foreground hover:text-foreground"
+                  'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                  mode === 'range'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 Khoảng thời gian
@@ -290,88 +354,119 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
 
             {/* Date Picker(s) */}
             {mode === 'single' ? (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      "w-[140px] sm:w-[160px] justify-start text-left font-normal h-8 text-xs sm:text-sm",
-                      !selectedDate && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-3 w-3 sm:h-4 sm:w-4" />
-                    {selectedDate ? format(selectedDate, "dd/MM/yyyy", { locale: vi }) : <span>Chọn ngày</span>}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="end">
-                  <Calendar
-                    mode="single"
-                    selected={selectedDate}
-                    onSelect={setSelectedDate}
-                    disabled={(date) => !isDateAvailable(date)}
-                    initialFocus
-                    className={cn("p-3 pointer-events-auto")}
-                  />
-                </PopoverContent>
-              </Popover>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={currentDateIdx <= 0}
+                  onClick={() => handleStepDate(-1)}
+                  title="Ngày có dữ liệu trước đó"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        'w-[136px] sm:w-[152px] justify-start text-left font-normal h-8 text-xs sm:text-sm',
+                        !effectiveSelectedDate && 'text-muted-foreground'
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                      {effectiveSelectedDate ? (
+                        format(effectiveSelectedDate, 'dd/MM/yyyy', { locale: vi })
+                      ) : (
+                        <span>Chọn ngày</span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="end">
+                    <Calendar
+                      mode="single"
+                      selected={effectiveSelectedDate}
+                      defaultMonth={effectiveSelectedDate}
+                      onSelect={setSelectedDate}
+                      disabled={(date) => !isDateAvailable(date)}
+                      initialFocus
+                      className={cn('p-3 pointer-events-auto')}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={currentDateIdx < 0 || currentDateIdx >= availableDates.length - 1}
+                  onClick={() => handleStepDate(1)}
+                  title="Ngày có dữ liệu kế tiếp"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             ) : (
-              /* Enhanced Date Range Picker */
               <Popover open={isRangePickerOpen} onOpenChange={setIsRangePickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
                     className={cn(
-                      "min-w-[200px] sm:min-w-[280px] justify-start text-left font-normal h-9 text-xs sm:text-sm gap-2",
-                      "bg-gradient-to-r from-background to-secondary/30 hover:from-secondary/50 hover:to-secondary/50",
-                      "border-primary/20 hover:border-primary/40 transition-all duration-200",
-                      !dateRange.from && "text-muted-foreground"
+                      'min-w-[200px] sm:min-w-[280px] justify-start text-left font-normal h-9 text-xs sm:text-sm gap-2',
+                      'bg-gradient-to-r from-background to-secondary/30 hover:from-secondary/50 hover:to-secondary/50',
+                      'border-primary/20 hover:border-primary/40 transition-all duration-200',
+                      !dateRange.from && 'text-muted-foreground'
                     )}
                   >
                     <CalendarDays className="h-4 w-4 text-primary" />
                     {dateRange.from ? (
                       dateRange.to ? (
                         <span className="flex items-center gap-1.5">
-                          <span className="font-medium">{format(dateRange.from, "dd/MM/yyyy")}</span>
+                          <span className="font-medium">{format(dateRange.from, 'dd/MM/yyyy')}</span>
                           <span className="text-muted-foreground">→</span>
-                          <span className="font-medium">{format(dateRange.to, "dd/MM/yyyy")}</span>
+                          <span className="font-medium">{format(dateRange.to, 'dd/MM/yyyy')}</span>
                         </span>
                       ) : (
-                        <span className="font-medium">{format(dateRange.from, "dd/MM/yyyy")}</span>
+                        <span className="font-medium">{format(dateRange.from, 'dd/MM/yyyy')}</span>
                       )
                     ) : (
                       <span>Chọn khoảng thời gian</span>
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent 
-                  className="w-auto p-0 shadow-xl border-primary/10" 
+                <PopoverContent
+                  className="w-auto p-0 shadow-xl border-primary/10"
                   align="end"
                   sideOffset={8}
                 >
                   <div className="flex flex-col sm:flex-row">
-                    {/* Quick Presets Panel */}
                     <div className="p-3 border-b sm:border-b-0 sm:border-r border-border bg-secondary/30">
                       <p className="text-xs font-medium text-muted-foreground mb-2 px-1">Chọn nhanh</p>
                       <div className="flex flex-row sm:flex-col gap-1 flex-wrap">
                         {RANGE_PRESETS.map((preset, index) => {
                           const today = availableDates[availableDates.length - 1] || new Date();
-                          const { from, to } = preset.getValue(today);
+                          const { from, to } = preset.getValue(availableDates, today);
                           const availableCount = getAvailableDatesInRange(from, to);
-                          
+
                           return (
                             <button
                               key={index}
                               onClick={() => handlePresetClick(preset)}
                               className={cn(
-                                "px-3 py-2 text-xs rounded-lg text-left transition-all duration-150",
-                                "hover:bg-primary/10 hover:text-primary",
-                                "flex items-center justify-between gap-2 min-w-[100px]",
-                                dateRange.from && dateRange.to && 
-                                isEqual(from, dateRange.from) && isEqual(to, dateRange.to)
-                                  ? "bg-primary/15 text-primary font-medium"
-                                  : "text-foreground"
+                                'px-3 py-2 text-xs rounded-lg text-left transition-all duration-150',
+                                'hover:bg-primary/10 hover:text-primary',
+                                'flex items-center justify-between gap-2 min-w-[130px]',
+                                dateRange.from &&
+                                  dateRange.to &&
+                                  isEqual(from, dateRange.from) &&
+                                  isEqual(to, dateRange.to)
+                                  ? 'bg-primary/15 text-primary font-medium'
+                                  : 'text-foreground'
                               )}
                             >
                               <span>{preset.label}</span>
@@ -386,11 +481,11 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
                       </div>
                     </div>
 
-                    {/* Calendar Panel */}
                     <div className="p-3">
                       <Calendar
                         mode="range"
                         selected={dateRange as { from: Date; to: Date }}
+                        defaultMonth={dateRange.to || effectiveSelectedDate}
                         onSelect={handleDateRangeSelect}
                         disabled={(date) => !isDateAvailable(date)}
                         numberOfMonths={1}
@@ -400,17 +495,17 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
                           today: new Date(),
                         }}
                         modifiersClassNames={{
-                          today: "calendar-today-marker",
+                          today: 'calendar-today-marker',
                         }}
                         classNames={{
-                          day_range_middle: "bg-gradient-to-r from-primary/10 via-primary/20 to-primary/10 text-foreground",
-                          day_selected: "calendar-day-selected",
-                          day_range_start: "calendar-day-range-edge calendar-day-range-start",
-                          day_range_end: "calendar-day-range-edge calendar-day-range-end",
+                          day_range_middle:
+                            'bg-gradient-to-r from-primary/10 via-primary/20 to-primary/10 text-foreground',
+                          day_selected: 'calendar-day-selected',
+                          day_range_start: 'calendar-day-range-edge calendar-day-range-start',
+                          day_range_end: 'calendar-day-range-edge calendar-day-range-end',
                         }}
                       />
-                      
-                      {/* Selected Range Summary */}
+
                       {dateRange.from && dateRange.to && (
                         <div className="mt-3 pt-3 border-t border-border">
                           <div className="flex items-center justify-between text-xs">
@@ -437,10 +532,10 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
               </Popover>
             )}
 
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleDownload} 
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownload}
               disabled={chartData.length === 0}
               className="gap-1 sm:gap-2 h-8 text-xs sm:text-sm px-2 sm:px-3"
             >
@@ -455,7 +550,9 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
           <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/30 rounded-lg px-3 py-2">
             <CalendarDays className="h-3.5 w-3.5 text-primary" />
             <span>
-              Hiển thị dữ liệu từ <span className="font-medium text-foreground">{format(dateRange.from, "dd/MM/yyyy")}</span> đến <span className="font-medium text-foreground">{format(dateRange.to, "dd/MM/yyyy")}</span>
+              Hiển thị dữ liệu từ{' '}
+              <span className="font-medium text-foreground">{format(dateRange.from, 'dd/MM/yyyy')}</span> đến{' '}
+              <span className="font-medium text-foreground">{format(dateRange.to, 'dd/MM/yyyy')}</span>
             </span>
             {chartData.length > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
@@ -496,8 +593,8 @@ export default function SensorChart({ sensorData }: SensorChartProps) {
           <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
             <CalendarDays className="h-8 w-8 opacity-50" />
             <span>
-              {mode === 'range' 
-                ? 'Chọn khoảng thời gian để xem biểu đồ' 
+              {mode === 'range'
+                ? 'Chọn khoảng thời gian để xem biểu đồ'
                 : 'Không có dữ liệu cho ngày đã chọn'}
             </span>
           </div>

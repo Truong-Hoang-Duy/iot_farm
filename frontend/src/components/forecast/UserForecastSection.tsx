@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import {
   Area,
   CartesianGrid,
@@ -19,16 +19,15 @@ import {
   RefreshCw,
   Sprout,
   AlertTriangle,
+  Calendar,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import {
   HORIZONS,
@@ -48,11 +47,14 @@ import {
   tooltipContentStyle,
 } from './chartUtils';
 
-interface ChartRow {
-  ts: number;
-  obs?: number;
-  yhat?: number;
-  band?: [number, number];
+export interface ForecastCompletionPayload {
+  lastObsTs?: number;
+  horizon: string;
+  force?: boolean;
+}
+
+export interface UserForecastSectionProps {
+  onForecastComplete?: (payload: ForecastCompletionPayload) => void;
 }
 
 interface OptimalRange {
@@ -69,9 +71,9 @@ const CHILI_OPTIMAL_RANGES: Record<string, OptimalRange> = {
     min: 50,
     max: 70,
     unit: '%',
-    lowAdvice: 'Độ ẩm đất có xu hướng giảm thấp, nên chủ động tưới bù nhỏ giọt để giữ ẩm vùng rễ ớt.',
-    highAdvice: 'Độ ẩm đất dự báo vượt mức an toàn, nên tạm ngưng tưới và kiểm tra thoát nước luống.',
-    okAdvice: 'Độ ẩm đất duy trì ổn định trong vùng tối ưu cho cây ớt hấp thu dinh dưỡng.',
+    lowAdvice: 'Độ ẩm đất dự báo giảm thấp dưới ngưỡng tối ưu. Nên chủ động tưới bù nhỏ giọt để giữ ẩm vùng rễ ớt.',
+    highAdvice: 'Độ ẩm đất dự báo vượt ngưỡng 70%. Nên tạm ngưng tưới và kiểm tra rãnh thoát nước luống để phòng ngập rễ.',
+    okAdvice: 'Độ ẩm đất dự báo duy trì ổn định trong vùng tối ưu (50–70%) cho bộ rễ cây ớt hấp thu dinh dưỡng.',
   },
   soiltemp: {
     min: 20,
@@ -142,155 +144,337 @@ const CHILI_OPTIMAL_RANGES: Record<string, OptimalRange> = {
 const SHORT_HORIZONS = HORIZONS.filter((h) => h.group === 'short');
 const LONG_HORIZONS = HORIZONS.filter((h) => h.group === 'long');
 
-function buildChartData(
-  data: ForecastResponse,
-  horizonMinutes: number,
-): { rows: ChartRow[]; nowTs?: number; hasBand: boolean } {
-  const hist = data.history.filter((p) => p.v !== undefined);
-  const lastHist = hist[hist.length - 1];
-  const nowTs = data.last_observation_ts ?? lastHist?.ts ?? data.issued_ts;
-
-  const minWindow = data.group === 'long' ? 3 * 86400_000 : 3 * 3600_000;
-  const windowMs = Math.max(horizonMinutes * 60_000 * 3.5, minWindow);
-  const refTs = lastHist?.ts ?? nowTs ?? Date.now();
-  const visibleHist = downsample(
-    hist.filter((p) => p.ts >= refTs - windowMs),
-    400,
-  );
-
-  const map = new Map<number, ChartRow>();
-  for (const p of visibleHist) map.set(p.ts, { ts: p.ts, obs: p.v });
-
-  const hasBand = data.forecast.some((p) => p.lo !== undefined && p.hi !== undefined);
-
-  if (lastHist && lastHist.v !== undefined) {
-    const row = map.get(lastHist.ts) ?? { ts: lastHist.ts, obs: lastHist.v };
-    row.yhat = lastHist.v;
-    if (hasBand) row.band = [lastHist.v, lastHist.v];
-    map.set(lastHist.ts, row);
-  }
-
-  for (const p of downsample(data.forecast, 320)) {
-    if (p.yhat === undefined) continue;
-    const row = map.get(p.ts) ?? { ts: p.ts };
-    row.yhat = p.yhat;
-    if (p.lo !== undefined && p.hi !== undefined) {
-      row.band = [Math.min(p.lo, p.hi), Math.max(p.lo, p.hi)];
-    }
-    map.set(p.ts, row);
-  }
-
-  return { rows: [...map.values()].sort((a, b) => a.ts - b.ts), nowTs, hasBand };
+interface RawValuesByTarget {
+  obs?: number;
+  yhat?: number;
+  lo?: number;
+  hi?: number;
 }
 
-function EndUserForecastTooltip({
+type MultiChartRow = {
+  ts: number;
+  _raw: Record<string, RawValuesByTarget>;
+  singleBand?: [number, number];
+} & Record<string, unknown>;
+
+function buildMultiChartData(
+  seriesList: Array<{ key: string; data: ForecastResponse }>,
+  horizonMinutes: number,
+  normalize: boolean,
+): {
+  rows: MultiChartRow[];
+  nowTs?: number;
+  hasSingleBand: boolean;
+  inputStartTs?: number;
+  lastObsTs?: number;
+  forecastEndTs?: number;
+} {
+  if (seriesList.length === 0) {
+    return { rows: [], hasSingleBand: false };
+  }
+
+  const firstData = seriesList[0].data;
+  const firstHist = firstData.history.filter((p) => p.v !== undefined);
+  const lastHist = firstHist[firstHist.length - 1];
+  const lastObsTs = firstData.last_observation_ts ?? lastHist?.ts;
+  const nowTs = lastObsTs ?? firstData.issued_ts;
+  const inputStartTs = firstHist[0]?.ts ?? lastObsTs;
+
+  const firstFc = firstData.forecast.filter((p) => p.yhat !== undefined);
+  const forecastEndTs = firstFc.length ? firstFc[firstFc.length - 1].ts : undefined;
+
+  const minWindow = firstData.group === 'long' ? 3 * 86400_000 : 3 * 3600_000;
+  const windowMs = Math.max(horizonMinutes * 60_000 * 3.5, minWindow);
+  const refTs = lastObsTs ?? nowTs ?? Date.now();
+
+  const map = new Map<number, MultiChartRow>();
+  const ensureRow = (ts: number): MultiChartRow => {
+    let r = map.get(ts);
+    if (!r) {
+      r = { ts, _raw: {} };
+      map.set(ts, r);
+    }
+    return r;
+  };
+
+  const minMaxByKey = new Map<string, { min: number; max: number }>();
+
+  for (const { key, data } of seriesList) {
+    const hist = downsample(
+      data.history.filter((p) => p.v !== undefined && p.ts >= refTs - windowMs),
+      350,
+    );
+    const fc = downsample(
+      data.forecast.filter((p) => p.yhat !== undefined),
+      300,
+    );
+
+    const allVals: number[] = [];
+    for (const p of hist) if (p.v !== undefined) allVals.push(p.v);
+    for (const p of fc) if (p.yhat !== undefined) allVals.push(p.yhat);
+
+    const mn = allVals.length ? Math.min(...allVals) : 0;
+    const mx = allVals.length ? Math.max(...allVals) : 1;
+    minMaxByKey.set(key, { min: mn, max: mx > mn ? mx : mn + 1 });
+
+    for (const p of hist) {
+      const row = ensureRow(p.ts);
+      row._raw[key] = { ...(row._raw[key] ?? {}), obs: p.v };
+    }
+
+    const lastP = hist[hist.length - 1];
+    if (lastP && lastP.v !== undefined) {
+      const row = ensureRow(lastP.ts);
+      row._raw[key] = {
+        ...(row._raw[key] ?? {}),
+        obs: lastP.v,
+        yhat: lastP.v,
+        lo: lastP.v,
+        hi: lastP.v,
+      };
+    }
+
+    for (const p of fc) {
+      const row = ensureRow(p.ts);
+      row._raw[key] = {
+        ...(row._raw[key] ?? {}),
+        yhat: p.yhat,
+        lo: p.lo,
+        hi: p.hi,
+      };
+    }
+  }
+
+  const normVal = (key: string, v: number | undefined): number | undefined => {
+    if (v === undefined) return undefined;
+    if (!normalize) return v;
+    const mm = minMaxByKey.get(key);
+    if (!mm) return v;
+    return ((v - mm.min) / (mm.max - mm.min)) * 100;
+  };
+
+  const isSingle = seriesList.length === 1;
+  const singleKey = isSingle ? seriesList[0].key : undefined;
+  let hasSingleBand = false;
+
+  const sortedRows = [...map.values()].sort((a, b) => a.ts - b.ts);
+  for (const row of sortedRows) {
+    for (const { key } of seriesList) {
+      const rv = row._raw[key];
+      if (!rv) continue;
+      if (rv.obs !== undefined) {
+        row[`obs_${key}`] = normVal(key, rv.obs);
+      }
+      if (rv.yhat !== undefined) {
+        row[`yhat_${key}`] = normVal(key, rv.yhat);
+      }
+      if (isSingle && key === singleKey && rv.lo !== undefined && rv.hi !== undefined && !normalize) {
+        row.singleBand = [Math.min(rv.lo, rv.hi), Math.max(rv.lo, rv.hi)];
+        hasSingleBand = true;
+      }
+    }
+  }
+
+  return {
+    rows: sortedRows,
+    nowTs,
+    hasSingleBand,
+    inputStartTs,
+    lastObsTs,
+    forecastEndTs,
+  };
+}
+
+function MultiForecastTooltip({
   active,
   payload,
   label,
-  unit,
-  digits,
+  selectedKeys,
 }: {
   active?: boolean;
-  payload?: Array<{ dataKey?: string | number; value?: unknown; payload?: ChartRow }>;
+  payload?: Array<{ payload?: MultiChartRow }>;
   label?: number;
-  unit: string;
-  digits: number;
+  selectedKeys: string[];
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0]?.payload;
   if (!row) return null;
+
   return (
-    <div style={tooltipContentStyle} className="px-3 py-2 shadow-md space-y-1">
-      <p className="font-medium">{fmtDateTime(label ?? row.ts)}</p>
-      {row.obs !== undefined && (
-        <p className="flex items-center gap-2">
-          <span className="inline-block h-0.5 w-3.5 bg-foreground" /> Thực tế:{' '}
-          <b>{fmtNum(row.obs, digits)}</b> {unit}
-        </p>
-      )}
-      {row.yhat !== undefined && row.obs === undefined && (
-        <p className="flex items-center gap-2">
-          <span className="inline-block h-0.5 w-3.5 border-t-2 border-dashed border-primary" /> Dự báo:{' '}
-          <b>{fmtNum(row.yhat, digits)}</b> {unit}
-        </p>
-      )}
-      {row.band && row.obs === undefined && (
-        <p className="text-muted-foreground">
-          Khoảng dự kiến: {fmtNum(row.band[0], digits)} – {fmtNum(row.band[1], digits)} {unit}
-        </p>
-      )}
+    <div style={tooltipContentStyle} className="px-3 py-2.5 shadow-md space-y-1.5 min-w-[200px]">
+      <p className="font-semibold border-b border-border/60 pb-1">{fmtDateTime(label ?? row.ts)}</p>
+      <div className="space-y-1.5">
+        {selectedKeys.map((key) => {
+          const tDef = TARGET_MAP[key];
+          const rv = row._raw?.[key];
+          if (!rv || (rv.obs === undefined && rv.yhat === undefined)) return null;
+          const isForecastPoint = rv.obs === undefined && rv.yhat !== undefined;
+          const val = isForecastPoint ? rv.yhat : rv.obs;
+          const digits = (tDef?.digits ?? 1) + (isForecastPoint ? 1 : 0);
+
+          return (
+            <div key={key} className="text-xs space-y-0.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: tDef?.color ?? 'hsl(var(--primary))' }}
+                  />
+                  {tDef?.label ?? key}
+                  <span className="text-[10px] opacity-75">
+                    ({isForecastPoint ? 'dự báo' : 'thực tế'})
+                  </span>
+                </span>
+                <b className="text-foreground">
+                  {fmtNum(val, digits)} {tDef?.unit}
+                </b>
+              </div>
+              {isForecastPoint && rv.lo !== undefined && rv.hi !== undefined && (
+                <p className="text-[10px] text-muted-foreground pl-3.5">
+                  Khoảng 80%: {fmtNum(rv.lo, tDef?.digits ?? 1)} – {fmtNum(rv.hi, tDef?.digits ?? 1)} {tDef?.unit}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-export function UserForecastSection() {
+export function UserForecastSection({ onForecastComplete }: UserForecastSectionProps) {
+  // Mặc định chỉ chọn 1 thông số quan trọng nhất (Độ ẩm đất - moisture) để demo giao diện gọn đẹp
   const [mode, setMode] = useState<'short' | 'long'>('short');
-  const [target, setTarget] = useState<string>('moisture');
+  const [selectedTargets, setSelectedTargets] = useState<string[]>(['moisture']);
   const [shortHorizon, setShortHorizon] = useState<string>('6h');
   const [longHorizon, setLongHorizon] = useState<string>('3d');
+  const [scaleMode, setScaleMode] = useState<'auto' | 'normalized' | 'raw'>('auto');
 
   const horizon = mode === 'short' ? shortHorizon : longHorizon;
+  const hDef = HORIZON_MAP[horizon];
 
-  const q = useQuery({
-    ...forecastQuery(target, horizon, 'xgboost'),
-    placeholderData: keepPreviousData,
+  const queries = useQueries({
+    queries: selectedTargets.map((t) => ({
+      ...forecastQuery(t, horizon, 'xgboost'),
+    })),
   });
 
-  const tDef = TARGET_MAP[target];
-  const hDef = HORIZON_MAP[horizon];
-  const optimal = CHILI_OPTIMAL_RANGES[target];
-  const data = q.data;
-  const isStale = !!data && (data.target !== target || data.horizon !== horizon);
+  const isLoading = queries.some((q) => q.isLoading && !q.data);
+  const isFetching = queries.some((q) => q.isFetching);
+  const firstError = queries.find((q) => q.isError)?.error;
+
+  const loadedSeries = useMemo(() => {
+    const out: Array<{ key: string; data: ForecastResponse }> = [];
+    selectedTargets.forEach((key, idx) => {
+      const d = queries[idx]?.data;
+      if (d) out.push({ key, data: d });
+    });
+    return out;
+  }, [selectedTargets, queries]);
+
+  const useNormalized = useMemo(() => {
+    if (selectedTargets.length <= 1) return false;
+    if (scaleMode === 'normalized') return true;
+    if (scaleMode === 'raw') return false;
+    return selectedTargets.length >= 3;
+  }, [selectedTargets.length, scaleMode]);
+
+  const useDualAxis = !useNormalized && selectedTargets.length === 2;
 
   const chart = useMemo(
-    () => (data ? buildChartData(data, HORIZON_MAP[data.horizon]?.minutes ?? hDef?.minutes ?? 360) : null),
-    [data, hDef?.minutes],
+    () => buildMultiChartData(loadedSeries, hDef?.minutes ?? 360, useNormalized),
+    [loadedSeries, hDef?.minutes, useNormalized],
   );
-  const span =
-    chart && chart.rows.length > 1 ? chart.rows[chart.rows.length - 1].ts - chart.rows[0].ts : 86400_000;
-  const tick = useMemo(() => makeTimeTick(span), [span]);
 
-  const summary = useMemo(() => {
-    if (!data) return null;
-    const hist = data.history.filter((p) => p.v !== undefined);
-    const fc = data.forecast.filter((p) => p.yhat !== undefined);
-    const lastObs = hist.length ? hist[hist.length - 1] : undefined;
-    const endFc = fc.length ? fc[fc.length - 1] : undefined;
-    if (!lastObs || !endFc || lastObs.v === undefined || endFc.yhat === undefined) return null;
-
-    const delta = endFc.yhat - lastObs.v;
-    const yhats = fc.map((p) => p.yhat as number);
-    const minPred = Math.min(...yhats);
-    const maxPred = Math.max(...yhats);
-
-    let status: 'ok' | 'warn' = 'ok';
-    let advice = optimal?.okAdvice ?? 'Chỉ số dự báo ổn định trong ngưỡng an toàn.';
-    if (optimal) {
-      if (endFc.yhat < optimal.min || minPred < optimal.min) {
-        status = 'warn';
-        advice = optimal.lowAdvice;
-      } else if (endFc.yhat > optimal.max || maxPred > optimal.max) {
-        status = 'warn';
-        advice = optimal.highAdvice;
+  // Tự động kích hoạt phân tích cảnh báo hệ thống Gemini khi dự báo mô hình hoàn tất
+  const lastNotifiedRef = useRef<string>('');
+  useEffect(() => {
+    if (!isFetching && loadedSeries.length > 0 && chart.lastObsTs && onForecastComplete) {
+      const sig = `${chart.lastObsTs}_${horizon}`;
+      if (lastNotifiedRef.current !== sig) {
+        lastNotifiedRef.current = sig;
+        onForecastComplete({ lastObsTs: chart.lastObsTs, horizon, force: false });
       }
     }
+  }, [isFetching, loadedSeries.length, chart.lastObsTs, horizon, onForecastComplete]);
 
-    return {
-      lastObs,
-      endFc,
-      delta,
-      status,
-      advice,
-    };
-  }, [data, optimal]);
+  const span =
+    chart.rows.length > 1 ? chart.rows[chart.rows.length - 1].ts - chart.rows[0].ts : 86400_000;
+  const tick = useMemo(() => makeTimeTick(span), [span]);
+
+  const summaries = useMemo(() => {
+    return loadedSeries
+      .map(({ key, data }) => {
+        const tDef = TARGET_MAP[key];
+        const optimal = CHILI_OPTIMAL_RANGES[key];
+        const hist = data.history.filter((p) => p.v !== undefined);
+        const fc = data.forecast.filter((p) => p.yhat !== undefined);
+        const lastObs = hist.length ? hist[hist.length - 1] : undefined;
+        const endFc = fc.length ? fc[fc.length - 1] : undefined;
+        if (!lastObs || !endFc || lastObs.v === undefined || endFc.yhat === undefined) return null;
+
+        const delta = endFc.yhat - lastObs.v;
+        const yhats = fc.map((p) => p.yhat as number);
+        const minPred = Math.min(...yhats);
+        const maxPred = Math.max(...yhats);
+
+        let status: 'ok' | 'warn' = 'ok';
+        let advice = optimal?.okAdvice ?? 'Chỉ số dự báo ổn định trong ngưỡng an toàn.';
+        if (optimal) {
+          if (endFc.yhat < optimal.min || minPred < optimal.min) {
+            status = 'warn';
+            advice = optimal.lowAdvice;
+          } else if (endFc.yhat > optimal.max || maxPred > optimal.max) {
+            status = 'warn';
+            advice = optimal.highAdvice;
+          }
+        }
+
+        return {
+          key,
+          tDef,
+          optimal,
+          lastObs,
+          endFc,
+          delta,
+          status,
+          advice,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+  }, [loadedSeries]);
+
+  const toggleTarget = (key: string) => {
+    setSelectedTargets((prev) => {
+      if (prev.includes(key)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((k) => k !== key);
+      }
+      return [...prev, key];
+    });
+  };
+
+  const handleRefreshAll = () => {
+    queries.forEach((q) => q.refetch());
+    if (onForecastComplete) {
+      onForecastComplete({ lastObsTs: chart.lastObsTs, horizon, force: true });
+    }
+  };
 
   const activeHorizons = mode === 'short' ? SHORT_HORIZONS : LONG_HORIZONS;
+  const isSingleMode = selectedTargets.length === 1;
+  const singleSummary = isSingleMode ? summaries[0] : undefined;
+  const singleTargetDef = isSingleMode ? TARGET_MAP[selectedTargets[0]] : undefined;
+  const singleOptimal = isSingleMode ? CHILI_OPTIMAL_RANGES[selectedTargets[0]] : undefined;
+  const leftTargetDef = TARGET_MAP[selectedTargets[0]];
+  const rightTargetDef = useDualAxis ? TARGET_MAP[selectedTargets[1]] : undefined;
 
   return (
-    <Card className="rounded-2xl border-border shadow-xs">
-      <CardHeader className="p-4 sm:p-5 pb-3 border-b border-border/60">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Tiêu đề gọn + Chọn chỉ số cảm biến */}
+    <Card className="rounded-2xl border-border shadow-xs overflow-hidden">
+      {/* Thanh công cụ gọn gàng trên 1 hàng */}
+      <CardHeader className="p-4 sm:p-5 pb-3.5 border-b border-border/60 bg-secondary/15">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          {/* Bên trái: Tiêu đề + Mốc ngày tính toán */}
           <div className="flex flex-wrap items-center gap-3">
             <CardTitle className="font-display text-base sm:text-lg font-semibold flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -299,28 +483,138 @@ export function UserForecastSection() {
               Dự báo xu hướng
             </CardTitle>
 
-            <Select value={target} onValueChange={setTarget}>
-              <SelectTrigger className="h-9 w-[190px] rounded-xl text-xs font-medium bg-secondary/40 border-border">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TARGETS.map((t) => (
-                  <SelectItem key={t.key} value={t.key} className="text-xs">
-                    {t.label} {t.unit ? `(${t.unit})` : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {chart.lastObsTs && (
+              <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl border border-border/80 bg-card px-3 py-1 text-xs text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span>
+                  Dữ liệu: <b className="text-foreground">{fmtDateTime(chart.inputStartTs)}</b> –{' '}
+                  <b className="text-foreground">{fmtDateTime(chart.lastObsTs)}</b>
+                </span>
+                {chart.forecastEndTs && (
+                  <>
+                    <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <span>
+                      Dự báo tới: <b className="text-primary">{fmtDateTime(chart.forecastEndTs)}</b>
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Thanh chuyển đổi Ngắn hạn / Dài hạn + Mốc thời gian trên 1 hàng gọn */}
+          {/* Bên phải: Popover chọn 1 hoặc nhiều biến + Ngắn/Dài hạn + Mốc thời gian + Làm mới */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-border bg-secondary/50 p-0.5">
+            {/* Popover chọn biến cảm biến (mặc định 1 biến Độ ẩm đất, bấm vào mới xổ danh sách chọn nhiều biến) */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 rounded-xl gap-2 text-xs font-medium bg-card border-border"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-primary" />
+                  {isSingleMode ? (
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: singleTargetDef?.color }}
+                      />
+                      {singleTargetDef?.label}
+                      {singleTargetDef?.unit ? ` (${singleTargetDef.unit})` : ''}
+                    </span>
+                  ) : (
+                    <span>Đã chọn {selectedTargets.length} thông số</span>
+                  )}
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 p-3 space-y-2.5 rounded-xl">
+                <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                  <span className="text-xs font-semibold text-foreground">Chọn thông số dự báo</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTargets(['moisture'])}
+                      className="text-[11px] text-primary hover:underline px-1"
+                    >
+                      Mặc định (1)
+                    </button>
+                    <span className="text-muted-foreground text-[10px]">•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTargets(TARGETS.map((t) => t.key))}
+                      className="text-[11px] text-muted-foreground hover:text-foreground px-1"
+                    >
+                      Tất cả (9)
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-1 max-h-64 overflow-y-auto">
+                  {TARGETS.map((t) => {
+                    const checked = selectedTargets.includes(t.key);
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => toggleTarget(t.key)}
+                        className={cn(
+                          'flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors',
+                          checked
+                            ? 'bg-primary/10 text-foreground font-medium'
+                            : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
+                        )}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: t.color }}
+                          />
+                          <span>
+                            {t.label} {t.unit ? `(${t.unit})` : ''}
+                          </span>
+                        </span>
+                        {checked && <Check className="h-3.5 w-3.5 text-primary" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedTargets.length >= 2 && (
+                  <div className="pt-2 border-t border-border/60 flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">Thang trục Y:</span>
+                    <div className="inline-flex rounded-lg border border-border bg-secondary/40 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setScaleMode('normalized')}
+                        className={cn(
+                          'rounded-md px-2 py-0.5 font-medium',
+                          useNormalized ? 'bg-card text-foreground shadow-2xs' : 'text-muted-foreground',
+                        )}
+                      >
+                        0–100%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScaleMode('raw')}
+                        className={cn(
+                          'rounded-md px-2 py-0.5 font-medium',
+                          !useNormalized ? 'bg-card text-foreground shadow-2xs' : 'text-muted-foreground',
+                        )}
+                      >
+                        Đơn vị gốc
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+
+            {/* Nút gạt Ngắn hạn / Dài hạn */}
+            <div className="inline-flex rounded-xl border border-border bg-card p-0.5">
               <button
                 type="button"
                 onClick={() => setMode('short')}
                 className={cn(
-                  'rounded-lg px-3 py-1 text-xs font-medium transition-all',
+                  'rounded-lg px-2.5 py-1 text-xs font-medium transition-all',
                   mode === 'short'
                     ? 'bg-primary text-primary-foreground shadow-2xs'
                     : 'text-muted-foreground hover:text-foreground',
@@ -332,7 +626,7 @@ export function UserForecastSection() {
                 type="button"
                 onClick={() => setMode('long')}
                 className={cn(
-                  'rounded-lg px-3 py-1 text-xs font-medium transition-all',
+                  'rounded-lg px-2.5 py-1 text-xs font-medium transition-all',
                   mode === 'long'
                     ? 'bg-primary text-primary-foreground shadow-2xs'
                     : 'text-muted-foreground hover:text-foreground',
@@ -342,7 +636,8 @@ export function UserForecastSection() {
               </button>
             </div>
 
-            <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card p-0.5">
+            {/* Các mốc thời gian dự báo */}
+            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-border bg-card p-0.5">
               {activeHorizons.map((h) => {
                 const active = h.key === horizon;
                 return (
@@ -351,7 +646,7 @@ export function UserForecastSection() {
                     type="button"
                     onClick={() => (mode === 'short' ? setShortHorizon(h.key) : setLongHorizon(h.key))}
                     className={cn(
-                      'rounded-lg px-2.5 py-1 text-xs font-medium transition-all',
+                      'rounded-lg px-2 py-1 text-xs font-medium transition-all',
                       active
                         ? 'bg-primary/15 text-primary font-semibold'
                         : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
@@ -364,209 +659,350 @@ export function UserForecastSection() {
             </div>
 
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon"
-              className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
-              onClick={() => q.refetch()}
-              disabled={q.isFetching}
-              title="Làm mới dự báo"
+              className="h-8 w-8 rounded-xl bg-card"
+              onClick={handleRefreshAll}
+              disabled={isFetching}
+              title="Làm mới dự báo & đồng bộ cảnh báo"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', q.isFetching && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
             </Button>
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="p-4 sm:p-5 space-y-4">
-        {/* Dải 3 thẻ KPI + Khuyến nghị ngắn gọn */}
-        {summary && !isStale && (
-          <div className="grid gap-3 sm:grid-cols-12">
-            <div className="sm:col-span-3 rounded-xl border border-border/80 bg-secondary/25 px-3.5 py-3 flex flex-col justify-between">
-              <span className="text-[11px] font-medium text-muted-foreground">Số liệu gần nhất</span>
-              <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="font-display text-2xl font-bold text-foreground">
-                  {fmtNum(summary.lastObs.v, tDef?.digits ?? 1)}
-                </span>
-                <span className="text-xs text-muted-foreground">{tDef?.unit}</span>
-              </div>
-              <span className="mt-1 text-[11px] text-muted-foreground truncate">
-                {fmtDateTime(summary.lastObs.ts)}
-              </span>
-            </div>
+      <CardContent className="p-4 sm:p-5">
+        {/* Bố cục bất đối xứng 8/4 khi xem 1 thông số (mặc định demo) hoặc 12 cột khi so sánh nhiều thông số */}
+        <div className={cn('grid gap-5', isSingleMode && singleSummary ? 'lg:grid-cols-12 lg:items-stretch' : 'grid-cols-1')}>
+          {/* Khung Biểu đồ */}
+          <div className={cn(isSingleMode && singleSummary ? 'lg:col-span-8' : 'col-span-1')}>
+            <div className={cn('h-72 sm:h-80 relative', isFetching && 'opacity-80 transition-opacity')}>
+              {isLoading ? (
+                <ChartSkeleton className="h-full" />
+              ) : firstError && loadedSeries.length === 0 ? (
+                <ErrorState error={firstError} onRetry={handleRefreshAll} className="h-full" />
+              ) : chart.rows.length === 0 ? (
+                <EmptyState message="Chưa có dữ liệu dự báo cho lựa chọn này" className="h-full" />
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chart.rows} margin={{ top: 10, right: useDualAxis ? 8 : 12, left: -6, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="userFcBand" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.24} />
+                        <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis
+                      dataKey="ts"
+                      type="number"
+                      scale="time"
+                      domain={['dataMin', 'dataMax']}
+                      tickFormatter={tick}
+                      minTickGap={35}
+                      {...axisProps}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      domain={useNormalized ? [0, 100] : ['auto', 'auto']}
+                      width={44}
+                      {...axisProps}
+                      tickFormatter={(v: number) =>
+                        useNormalized
+                          ? `${Math.round(v)}%`
+                          : fmtNum(v, (singleTargetDef ?? leftTargetDef)?.digits ?? 1)
+                      }
+                    />
+                    {useDualAxis && rightTargetDef && (
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        domain={['auto', 'auto']}
+                        width={44}
+                        {...axisProps}
+                        tickFormatter={(v: number) => fmtNum(v, rightTargetDef.digits ?? 1)}
+                      />
+                    )}
+                    <RTooltip content={<MultiForecastTooltip selectedKeys={selectedTargets} />} />
+                    <Legend wrapperStyle={{ fontSize: '11px' }} />
 
-            <div className="sm:col-span-3 rounded-xl border border-border/80 bg-secondary/25 px-3.5 py-3 flex flex-col justify-between">
-              <span className="text-[11px] font-medium text-muted-foreground">
-                Dự báo sau {hDef?.label ?? horizon}
-              </span>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="font-display text-2xl font-bold text-primary">
-                  {fmtNum(summary.endFc.yhat, (tDef?.digits ?? 1) + 1)}
-                </span>
-                <span className="text-xs text-muted-foreground">{tDef?.unit}</span>
-                <span
-                  className={cn(
-                    'ml-auto inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold',
-                    Math.abs(summary.delta) < 0.05
-                      ? 'bg-muted text-muted-foreground'
-                      : summary.delta > 0
-                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                      : 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
-                  )}
-                >
-                  {Math.abs(summary.delta) < 0.05 ? (
-                    <Minus className="h-3 w-3" />
-                  ) : summary.delta > 0 ? (
-                    <TrendingUp className="h-3 w-3" />
-                  ) : (
-                    <TrendingDown className="h-3 w-3" />
-                  )}
-                  {summary.delta > 0 ? '+' : ''}
-                  {fmtNum(summary.delta, tDef?.digits ?? 1)}
-                </span>
-              </div>
-              <span className="mt-1 text-[11px] text-muted-foreground truncate">
-                {summary.endFc.lo !== undefined && summary.endFc.hi !== undefined
-                  ? `Khoảng: ${fmtNum(summary.endFc.lo, tDef?.digits ?? 1)} – ${fmtNum(summary.endFc.hi, tDef?.digits ?? 1)} ${tDef?.unit ?? ''}`
-                  : fmtDateTime(summary.endFc.ts)}
-              </span>
-            </div>
+                    {chart.hasSingleBand && (
+                      <Area
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey="singleBand"
+                        name="Khoảng dự kiến (80%)"
+                        stroke="none"
+                        fill="url(#userFcBand)"
+                        isAnimationActive={false}
+                        connectNulls
+                        activeDot={false}
+                      />
+                    )}
 
-            <div
-              className={cn(
-                'sm:col-span-6 rounded-xl border px-4 py-3 flex items-center gap-3',
-                summary.status === 'ok'
-                  ? 'border-emerald-500/25 bg-emerald-500/[0.04]'
-                  : 'border-amber-500/35 bg-amber-500/[0.06]',
+                    {singleOptimal && !useNormalized && (
+                      <>
+                        <ReferenceLine
+                          yAxisId="left"
+                          y={singleOptimal.min}
+                          stroke="hsl(var(--warning))"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.65}
+                        />
+                        <ReferenceLine
+                          yAxisId="left"
+                          y={singleOptimal.max}
+                          stroke="hsl(var(--warning))"
+                          strokeDasharray="4 4"
+                          strokeOpacity={0.65}
+                        />
+                      </>
+                    )}
+
+                    {selectedTargets.map((key, idx) => {
+                      const tDef = TARGET_MAP[key];
+                      const color = tDef?.color ?? 'hsl(var(--primary))';
+                      const axisId = useDualAxis && idx === 1 ? 'right' : 'left';
+                      return (
+                        <Line
+                          key={`obs_${key}`}
+                          yAxisId={axisId}
+                          type="monotone"
+                          dataKey={`obs_${key}`}
+                          name={isSingleMode ? 'Thực tế' : `${tDef?.label ?? key} (thực tế)`}
+                          stroke={color}
+                          strokeWidth={2}
+                          dot={false}
+                          isAnimationActive={false}
+                          connectNulls
+                        />
+                      );
+                    })}
+
+                    {selectedTargets.map((key, idx) => {
+                      const tDef = TARGET_MAP[key];
+                      const color = isSingleMode ? 'hsl(var(--primary))' : tDef?.color ?? 'hsl(var(--primary))';
+                      const axisId = useDualAxis && idx === 1 ? 'right' : 'left';
+                      return (
+                        <Line
+                          key={`yhat_${key}`}
+                          yAxisId={axisId}
+                          type="monotone"
+                          dataKey={`yhat_${key}`}
+                          name={isSingleMode ? 'Dự báo' : `${tDef?.label ?? key} (dự báo)`}
+                          stroke={color}
+                          strokeWidth={2.5}
+                          strokeDasharray="6 4"
+                          dot={false}
+                          isAnimationActive={false}
+                          connectNulls
+                        />
+                      );
+                    })}
+
+                    {chart.nowTs !== undefined && (
+                      <ReferenceLine
+                        yAxisId="left"
+                        x={chart.nowTs}
+                        stroke="hsl(var(--muted-foreground))"
+                        strokeDasharray="3 3"
+                      />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
               )}
-            >
-              <div
-                className={cn(
-                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                  summary.status === 'ok'
-                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
-                )}
-              >
-                {summary.status === 'ok' ? (
-                  <Sprout className="h-4 w-4" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1 space-y-0.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-foreground">Đề xuất chăm sóc</span>
-                  {optimal && (
-                    <span className="rounded-md bg-background/80 border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-                      Ngưỡng chuẩn: {optimal.min}–{optimal.max} {optimal.unit}
+            </div>
+          </div>
+
+          {/* Cột phải (4 cols) khi xem 1 thông số: Thẻ tổng hợp chuyên sâu */}
+          {isSingleMode && singleSummary && (
+            <div className="lg:col-span-4 flex flex-col justify-between rounded-2xl border border-border bg-secondary/20 p-4 sm:p-5 space-y-4">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: singleSummary.tDef?.color }}
+                    />
+                    {singleSummary.tDef?.label}
+                  </span>
+                  {singleSummary.optimal && (
+                    <span className="rounded-lg bg-card border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      Chuẩn: {singleSummary.optimal.min}–{singleSummary.optimal.max} {singleSummary.optimal.unit}
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{summary.advice}</p>
+
+                {/* Hộp đối chiếu Hiện tại -> Dự báo */}
+                <div className="grid grid-cols-2 gap-3 rounded-xl bg-card border border-border/80 p-3.5">
+                  <div>
+                    <span className="text-[11px] text-muted-foreground block">Mẫu đo cuối</span>
+                    <div className="mt-1 flex items-baseline gap-1">
+                      <span className="font-display text-2xl font-bold text-foreground">
+                        {fmtNum(singleSummary.lastObs.v, singleSummary.tDef?.digits ?? 1)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{singleSummary.tDef?.unit}</span>
+                    </div>
+                    <span className="mt-0.5 text-[10px] text-muted-foreground block truncate">
+                      {fmtDateTime(singleSummary.lastObs.ts)}
+                    </span>
+                  </div>
+
+                  <div className="border-l border-border/60 pl-3">
+                    <span className="text-[11px] text-muted-foreground block">
+                      Sau {hDef?.label ?? horizon}
+                    </span>
+                    <div className="mt-1 flex items-baseline gap-1.5">
+                      <span className="font-display text-2xl font-bold text-primary">
+                        {fmtNum(singleSummary.endFc.yhat, (singleSummary.tDef?.digits ?? 1) + 1)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{singleSummary.tDef?.unit}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-0.5 text-[11px] font-semibold',
+                          Math.abs(singleSummary.delta) < 0.05
+                            ? 'text-muted-foreground'
+                            : singleSummary.delta > 0
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-sky-600 dark:text-sky-400',
+                        )}
+                      >
+                        {Math.abs(singleSummary.delta) < 0.05 ? (
+                          <Minus className="h-3 w-3" />
+                        ) : singleSummary.delta > 0 ? (
+                          <TrendingUp className="h-3 w-3" />
+                        ) : (
+                          <TrendingDown className="h-3 w-3" />
+                        )}
+                        {singleSummary.delta > 0 ? '+' : ''}
+                        {fmtNum(singleSummary.delta, singleSummary.tDef?.digits ?? 1)} {singleSummary.tDef?.unit}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {singleSummary.endFc.lo !== undefined && singleSummary.endFc.hi !== undefined && (
+                  <div className="flex items-center justify-between text-xs px-1">
+                    <span className="text-muted-foreground">Khoảng dao động dự kiến (80%):</span>
+                    <span className="font-semibold text-foreground">
+                      {fmtNum(singleSummary.endFc.lo, singleSummary.tDef?.digits ?? 1)} –{' '}
+                      {fmtNum(singleSummary.endFc.hi, singleSummary.tDef?.digits ?? 1)} {singleSummary.tDef?.unit}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Khuyến nghị chăm sóc */}
+              <div
+                className={cn(
+                  'rounded-xl border p-3.5 space-y-1.5',
+                  singleSummary.status === 'ok'
+                    ? 'border-emerald-500/30 bg-emerald-500/[0.06]'
+                    : 'border-amber-500/40 bg-amber-500/[0.08]',
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {singleSummary.status === 'ok' ? (
+                    <Sprout className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  )}
+                  <span className="text-xs font-semibold text-foreground">Khuyến nghị chăm sóc sớm</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">{singleSummary.advice}</p>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Biểu đồ dự báo tinh gọn */}
-        <div className={cn('h-64 sm:h-72 relative', isStale && 'opacity-60 transition-opacity')}>
-          {q.isLoading ? (
-            <ChartSkeleton className="h-full" />
-          ) : q.isError && (!data || !q.isFetching) ? (
-            <ErrorState error={q.error} onRetry={() => q.refetch()} className="h-full" />
-          ) : !chart || chart.rows.length === 0 ? (
-            <EmptyState message="Chưa có dữ liệu dự báo cho thông số này" className="h-full" />
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chart.rows} margin={{ top: 8, right: 10, left: -8, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="userFcBand" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.22} />
-                    <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis
-                  dataKey="ts"
-                  type="number"
-                  scale="time"
-                  domain={['dataMin', 'dataMax']}
-                  tickFormatter={tick}
-                  minTickGap={35}
-                  {...axisProps}
-                />
-                <YAxis
-                  domain={['auto', 'auto']}
-                  width={44}
-                  {...axisProps}
-                  tickFormatter={(v: number) => fmtNum(v, tDef?.digits ?? 1)}
-                />
-                <RTooltip
-                  content={
-                    <EndUserForecastTooltip unit={tDef?.unit ?? ''} digits={(tDef?.digits ?? 1) + 1} />
-                  }
-                />
-                <Legend wrapperStyle={{ fontSize: '11px' }} />
-                {chart.hasBand && (
-                  <Area
-                    type="monotone"
-                    dataKey="band"
-                    name="Khoảng dự kiến"
-                    stroke="none"
-                    fill="url(#userFcBand)"
-                    isAnimationActive={false}
-                    connectNulls
-                    activeDot={false}
-                  />
-                )}
-                {optimal && (
-                  <>
-                    <ReferenceLine
-                      y={optimal.min}
-                      stroke="hsl(var(--warning))"
-                      strokeDasharray="4 4"
-                      strokeOpacity={0.6}
-                    />
-                    <ReferenceLine
-                      y={optimal.max}
-                      stroke="hsl(var(--warning))"
-                      strokeDasharray="4 4"
-                      strokeOpacity={0.6}
-                    />
-                  </>
-                )}
-                <Line
-                  type="monotone"
-                  dataKey="obs"
-                  name="Thực tế"
-                  stroke={tDef?.color ?? 'hsl(var(--foreground))'}
-                  strokeWidth={2}
-                  dot={false}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-                <Line
-                  type="monotone"
-                  dataKey="yhat"
-                  name="Dự báo"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth={2.25}
-                  strokeDasharray="6 4"
-                  dot={chart.rows.filter((r) => r.obs === undefined).length <= 3 ? { r: 3 } : false}
-                  isAnimationActive={false}
-                  connectNulls
-                />
-                {chart.nowTs !== undefined && (
-                  <ReferenceLine
-                    x={chart.nowTs}
-                    stroke="hsl(var(--muted-foreground))"
-                    strokeDasharray="3 3"
-                  />
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
           )}
         </div>
+
+        {/* Khi người dùng chọn >= 2 thông số: Hiển thị lưới thẻ tóm tắt bên dưới biểu đồ */}
+        {!isSingleMode && summaries.length > 0 && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {summaries.map((item) => (
+              <div
+                key={item.key}
+                className={cn(
+                  'rounded-xl border p-3.5 space-y-2 transition-all',
+                  item.status === 'ok'
+                    ? 'border-border bg-secondary/20'
+                    : 'border-amber-500/35 bg-amber-500/[0.05]',
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: item.tDef?.color }}
+                    />
+                    <span className="font-semibold text-xs sm:text-sm text-foreground truncate">
+                      {item.tDef?.label ?? item.key}
+                    </span>
+                  </div>
+                  {item.optimal && (
+                    <span className="text-[11px] text-muted-foreground shrink-0">
+                      Chuẩn: {item.optimal.min}–{item.optimal.max} {item.optimal.unit}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-baseline justify-between gap-2 pt-0.5">
+                  <div>
+                    <span className="text-[11px] text-muted-foreground block">Mẫu cuối</span>
+                    <span className="font-display text-base font-bold text-foreground">
+                      {fmtNum(item.lastObs.v, item.tDef?.digits ?? 1)}{' '}
+                      <span className="text-[11px] font-normal text-muted-foreground">{item.tDef?.unit}</span>
+                    </span>
+                  </div>
+
+                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+
+                  <div>
+                    <span className="text-[11px] text-muted-foreground block">
+                      Dự báo ({hDef?.label ?? horizon})
+                    </span>
+                    <span className="font-display text-base font-bold text-primary">
+                      {fmtNum(item.endFc.yhat, (item.tDef?.digits ?? 1) + 1)}{' '}
+                      <span className="text-[11px] font-normal text-muted-foreground">{item.tDef?.unit}</span>
+                    </span>
+                  </div>
+
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold',
+                      Math.abs(item.delta) < 0.05
+                        ? 'bg-muted text-muted-foreground'
+                        : item.delta > 0
+                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                        : 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+                    )}
+                  >
+                    {Math.abs(item.delta) < 0.05 ? (
+                      <Minus className="h-3 w-3" />
+                    ) : item.delta > 0 ? (
+                      <TrendingUp className="h-3 w-3" />
+                    ) : (
+                      <TrendingDown className="h-3 w-3" />
+                    )}
+                    {item.delta > 0 ? '+' : ''}
+                    {fmtNum(item.delta, item.tDef?.digits ?? 1)}
+                  </span>
+                </div>
+
+                <div className="flex items-start gap-2 pt-1.5 border-t border-border/50 text-xs">
+                  {item.status === 'ok' ? (
+                    <Sprout className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  )}
+                  <span className="text-muted-foreground leading-relaxed">{item.advice}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -84,20 +84,24 @@ export default function PlantInfoPage() {
   const growthStages = plantGrowthData.stages;
   const totalNPK = plantGrowthData.totalNPK;
 
-  const datasetSummary: FullDatasetSummary = useMemo(
-    () =>
-      backendSummary?.summary
-        ? {
-            totalDays: backendSummary.summary.totalDays,
-            totalSamples: backendSummary.summary.totalSamples,
-            firstDate: backendSummary.summary.firstDate,
-            lastDate: backendSummary.summary.lastDate,
-            overallAverage: backendSummary.summary.overallAverage,
-            latestReading: backendSummary.summary.latestReading,
-          }
-        : summarizeFullFirebaseDataset(sensorData, latestReading),
-    [backendSummary, sensorData, latestReading]
-  );
+  const datasetSummary: FullDatasetSummary = useMemo(() => {
+    const fbDates = sensorData ? Object.keys(sensorData).sort() : [];
+    const fbLastDate = fbDates.length > 0 ? fbDates[fbDates.length - 1] : '';
+    if (backendSummary?.summary) {
+      const bSum = backendSummary.summary;
+      const bestLastDate = fbLastDate > bSum.lastDate ? fbLastDate : bSum.lastDate;
+      const bestTotalDays = Math.max(bSum.totalDays, fbDates.length);
+      return {
+        totalDays: bestTotalDays,
+        totalSamples: bSum.totalSamples,
+        firstDate: bSum.firstDate,
+        lastDate: bestLastDate,
+        overallAverage: bSum.overallAverage,
+        latestReading: latestReading || bSum.latestReading,
+      };
+    }
+    return summarizeFullFirebaseDataset(sensorData, latestReading);
+  }, [backendSummary, sensorData, latestReading]);
 
   // Tuổi cây thực tế tính từ ngày bắt đầu vận hành hệ thống đến ngày đo mới nhất
   const actualDaysPlanted = datasetSummary.totalDays;

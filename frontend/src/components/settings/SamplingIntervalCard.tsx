@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Timer, Save, Droplets, AlertCircle, Cpu } from 'lucide-react';
+import { Timer, Save, AlertCircle, Cpu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,13 +10,9 @@ import { useDeviceStatus } from '@/hooks/useDeviceStatus';
 import { toastFirebaseWriteError } from '@/lib/firebaseErrors';
 import { formatIntervalVi } from '@/lib/timeKeys';
 import {
-  DEFAULT_IRRIGATION_DURATION_MIN,
   DEFAULT_SAMPLING_INTERVAL_SEC,
-  MAX_IRRIGATION_DURATION_MIN,
   MAX_SAMPLING_INTERVAL_SEC,
-  MIN_IRRIGATION_DURATION_MIN,
   MIN_SAMPLING_INTERVAL_SEC,
-  setIrrigationDurationMin,
   setSamplingIntervalSec,
   subscribeStreamingConfigField,
 } from '@/services/firebaseAPI';
@@ -67,28 +63,12 @@ function validateInterval(raw: string, unit: Unit): { seconds: number | null; er
   return { seconds, error: null };
 }
 
-function validateDuration(raw: string): { minutes: number | null; error: string | null } {
-  const text = raw.trim();
-  if (!text) return { minutes: null, error: 'Vui lòng nhập thời lượng tưới.' };
-  const value = Number(text.replace(',', '.'));
-  if (!Number.isFinite(value)) return { minutes: null, error: 'Giá trị không hợp lệ – chỉ nhập số.' };
-  if (!Number.isInteger(value)) return { minutes: null, error: 'Thời lượng tưới phải là số nguyên phút.' };
-  if (value < MIN_IRRIGATION_DURATION_MIN || value > MAX_IRRIGATION_DURATION_MIN) {
-    return {
-      minutes: null,
-      error: `Thời lượng tưới phải từ ${MIN_IRRIGATION_DURATION_MIN} đến ${MAX_IRRIGATION_DURATION_MIN} phút.`,
-    };
-  }
-  return { minutes: value, error: null };
-}
-
 export function SamplingIntervalCard() {
   const { toast } = useToast();
   const device = useDeviceStatus();
 
   // Giá trị hiện tại trên Firebase
   const [currentSec, setCurrentSec] = useState<number | null>(null);
-  const [currentDuration, setCurrentDuration] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   // Bản nháp
@@ -98,24 +78,17 @@ export function SamplingIntervalCard() {
   const [touched, setTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [rawDuration, setRawDuration] = useState('');
-  const [durationDirty, setDurationDirty] = useState(false);
-  const [savingDuration, setSavingDuration] = useState(false);
-
   useEffect(() => {
     const unsubInterval = subscribeStreamingConfigField('sampling_interval_sec', (v) => {
       setCurrentSec(v);
       setLoaded(true);
     });
-    const unsubDuration = subscribeStreamingConfigField('irrigation_duration_min', setCurrentDuration);
     return () => {
       unsubInterval();
-      unsubDuration();
     };
   }, []);
 
   const effectiveSec = currentSec ?? DEFAULT_SAMPLING_INTERVAL_SEC;
-  const effectiveDuration = currentDuration ?? DEFAULT_IRRIGATION_DURATION_MIN;
 
   // Đồng bộ bản nháp với Firebase khi người dùng chưa sửa
   useEffect(() => {
@@ -125,12 +98,7 @@ export function SamplingIntervalCard() {
     setRawValue(String(effectiveSec / UNIT_FACTOR[u]));
   }, [effectiveSec, dirty]);
 
-  useEffect(() => {
-    if (!durationDirty) setRawDuration(String(effectiveDuration));
-  }, [effectiveDuration, durationDirty]);
-
   const { seconds, error } = useMemo(() => validateInterval(rawValue, unit), [rawValue, unit]);
-  const durationCheck = useMemo(() => validateDuration(rawDuration), [rawDuration]);
 
   const unchanged = seconds !== null && seconds === currentSec;
   const showError = (touched || dirty) && error;
@@ -158,23 +126,6 @@ export function SamplingIntervalCard() {
       toastFirebaseWriteError(err, 'Không thể lưu chu kỳ lấy mẫu');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleSaveDuration = async () => {
-    if (durationCheck.minutes === null) return;
-    setSavingDuration(true);
-    try {
-      await setIrrigationDurationMin(durationCheck.minutes);
-      setDurationDirty(false);
-      toast({
-        title: 'Đã lưu thời lượng tưới',
-        description: `Mỗi lần tưới theo lịch kéo dài ${durationCheck.minutes} phút.`,
-      });
-    } catch (err) {
-      toastFirebaseWriteError(err, 'Không thể lưu thời lượng tưới');
-    } finally {
-      setSavingDuration(false);
     }
   };
 
@@ -292,58 +243,6 @@ export function SamplingIntervalCard() {
             Cho phép từ {MIN_SAMPLING_INTERVAL_SEC} giây đến 24 giờ.
           </p>
         )}
-      </div>
-
-      {/* Irrigation duration */}
-      <div className="mt-6 pt-6 border-t border-border">
-        <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-          <div className="space-y-2">
-            <Label htmlFor="irrigationDuration" className="flex items-center gap-2">
-              <Droplets className="h-4 w-4 text-water" />
-              Thời lượng mỗi lần tưới theo lịch
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="irrigationDuration"
-                type="number"
-                min={MIN_IRRIGATION_DURATION_MIN}
-                max={MAX_IRRIGATION_DURATION_MIN}
-                step={1}
-                value={rawDuration}
-                onChange={(e) => {
-                  setRawDuration(e.target.value);
-                  setDurationDirty(true);
-                }}
-                className={cn('w-32', durationDirty && durationCheck.error && 'border-destructive')}
-              />
-              <span className="text-sm text-muted-foreground">phút</span>
-              <span className="text-xs text-muted-foreground">
-                (hiện tại: {effectiveDuration} phút{currentDuration === null ? ', mặc định' : ''})
-              </span>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            onClick={handleSaveDuration}
-            disabled={savingDuration || durationCheck.minutes === null || durationCheck.minutes === currentDuration}
-            className="gap-2"
-          >
-            <Save className="h-4 w-4" />
-            {savingDuration ? 'Đang lưu...' : 'Lưu thời lượng'}
-          </Button>
-        </div>
-        <p className="mt-2 text-xs min-h-[1.25rem]">
-          {durationDirty && durationCheck.error ? (
-            <span className="text-destructive flex items-center gap-1">
-              <AlertCircle className="h-3.5 w-3.5" /> {durationCheck.error}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">
-              Dùng cho chế độ tưới “Lập lịch” (streaming/config/irrigation_duration_min), từ {MIN_IRRIGATION_DURATION_MIN} đến{' '}
-              {MAX_IRRIGATION_DURATION_MIN} phút.
-            </span>
-          )}
-        </p>
       </div>
     </div>
   );

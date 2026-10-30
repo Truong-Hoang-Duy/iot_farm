@@ -322,19 +322,19 @@ function BackendStatusDisplay({
             {/* Card 2: InfluxDB phụ trợ */}
             <div className="rounded-xl border border-border/80 bg-secondary/30 p-3.5">
               <div className="flex items-center justify-between gap-2 mb-2">
-                <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
-                  <Layers className="h-3.5 w-3.5 text-accent" />
-                  InfluxDB (Tùy chọn)
+                <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5 whitespace-nowrap">
+                  <Layers className="h-3.5 w-3.5 text-accent shrink-0" />
+                  InfluxDB
                 </span>
                 {isInfluxOk ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold">
+                  <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold shrink-0">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                     Đang chạy
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-secondary text-muted-foreground border border-border px-2 py-0.5 text-[11px] font-medium" title="Cơ sở dữ liệu phụ trợ chưa mở cổng 18181; không ảnh hưởng vận hành">
-                    <Info className="h-3 w-3 text-muted-foreground" />
-                    Chưa mở cổng local
+                  <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-secondary text-muted-foreground border border-border px-2 py-0.5 text-[11px] font-medium shrink-0" title="Cơ sở dữ liệu phụ trợ chưa mở cổng 18181; không ảnh hưởng vận hành">
+                    <Info className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    Chưa mở cổng
                   </span>
                 )}
               </div>
@@ -342,7 +342,7 @@ function BackendStatusDisplay({
                 {isInfluxOk ? 'Cổng 18181 (Hoạt động)' : 'Cổng 18181 (Chưa bật)'}
               </p>
               <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {isInfluxOk ? 'Đồng bộ InfluxDB sẵn sàng' : 'Không bắt buộc (Firebase chạy chính)'}
+                {isInfluxOk ? 'Đồng bộ InfluxDB sẵn sàng' : 'Phụ trợ (chạy chính Firebase)'}
               </p>
             </div>
 
@@ -621,7 +621,7 @@ export default function LogsPage() {
             <span>Nhật ký đồng bộ</span>
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            Theo dõi các lô dữ liệu Jetson Nano gửi lên Firebase và quá trình đồng bộ 2 chiều
+            Theo dõi các log dữ liệu Jetson Nano gửi lên Firebase và quá trình đồng bộ 2 chiều
           </p>
         </div>
 
@@ -688,12 +688,12 @@ export default function LogsPage() {
               icon={Database}
               label={`Bản ghi đã nhận ${dayLabel}`}
               value={fmtNum(writeStats.totalRecords)}
-              hint={`${fmtNum(writeStats.batches)} lô · ${fmtNum(writeStats.backlog)} từ đệm offline`}
+              hint={`${fmtNum(writeStats.batches)} log · ${fmtNum(writeStats.backlog)} từ đệm offline`}
               tone="success"
             />
             <StatCard
               icon={XCircle}
-              label="Số lô báo lỗi"
+              label="Số log báo lỗi"
               value={fmtNum(writeStats.errors)}
               hint={writeStats.errors === 0 ? 'Tất cả bình thường' : 'Cần kiểm tra chi tiết'}
               tone={writeStats.errors > 0 ? 'destructive' : 'primary'}
@@ -934,7 +934,7 @@ export default function LogsPage() {
               {filteredWrites.length > 0 && (
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 mt-3 border-t border-border/60 text-xs">
                   <div className="text-muted-foreground text-center sm:text-left order-2 sm:order-1">
-                    Hiển thị <span className="font-semibold text-foreground">{startIndex + 1}</span>–<span className="font-semibold text-foreground">{endIndex}</span> trong số <span className="font-semibold text-foreground">{filteredWrites.length}</span> lô
+                    Hiển thị <span className="font-semibold text-foreground">{startIndex + 1}</span>–<span className="font-semibold text-foreground">{endIndex}</span> trong số <span className="font-semibold text-foreground">{filteredWrites.length}</span> log
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center gap-1.5 order-1 sm:order-2">

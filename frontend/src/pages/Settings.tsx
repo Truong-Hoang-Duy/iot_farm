@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Save, Calendar, Sparkles } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Settings as SettingsIcon, Save, Calendar, Sprout, Clock, Power } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateVN } from '@/lib/utils';
 import { SamplingIntervalCard } from '@/components/settings/SamplingIntervalCard';
+import { DeviceControlsSection } from '@/components/settings/DeviceControlsSection';
 import {
   fetchProcessedStagesSummary,
   subscribeStreamingConfig,
@@ -55,11 +58,34 @@ interface WarningThreshold {
   isDecimal: boolean;
 }
 
+// Xây dựng danh sách ngưỡng hoàn chỉnh từ dữ liệu Firebase hoặc mặc định chuẩn cây ớt
+const buildThresholdsList = (thresholdData?: Record<string, StreamingThreshold>): WarningThreshold[] => {
+  return sensorTypeOptions.map((sensor, idx) => {
+    const data = thresholdData ? (thresholdData[sensor.key as keyof typeof thresholdData] as StreamingThreshold | undefined) : undefined;
+    const optimal = CHILI_OPTIMAL_THRESHOLDS[sensor.key];
+    return {
+      id: String(idx + 1),
+      sensorKey: sensor.key,
+      sensorLabel: sensor.label,
+      unit: sensor.unit,
+      low: data?.low ?? optimal?.low ?? 0,
+      high: data?.high ?? optimal?.high ?? 100,
+      isDecimal: sensor.isDecimal,
+    };
+  });
+};
+
 export default function SettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') || 'controls';
+  const validTabs = ['controls', 'agronomy', 'system'];
+  const activeTab = validTabs.includes(currentTab) ? currentTab : 'controls';
+
   const [startDate, setStartDate] = useState<string>('2025-12-14');
   const [editedAgeDays, setEditedAgeDays] = useState<number>(261);
   const [dbSummary, setDbSummary] = useState<{ firstDate: string; lastDate: string; totalDays: number } | null>(null);
-  const [warningThresholds, setWarningThresholds] = useState<WarningThreshold[]>([]);
+  // Khởi tạo sẵn danh sách ngưỡng chuẩn để bảng không bao giờ bị rỗng
+  const [warningThresholds, setWarningThresholds] = useState<WarningThreshold[]>(() => buildThresholdsList());
   const [isSavingThresholds, setIsSavingThresholds] = useState(false);
   const [isSavingPlant, setIsSavingPlant] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -94,24 +120,9 @@ export default function SettingsPage() {
           }
         }
 
-        // Ngưỡng cảm biến
-        if (config.config?.threshold) {
-          const t = config.config.threshold;
-          const list: WarningThreshold[] = sensorTypeOptions.map((sensor, idx) => {
-            const data = t[sensor.key as keyof typeof t] as StreamingThreshold | undefined;
-            const optimal = CHILI_OPTIMAL_THRESHOLDS[sensor.key];
-            return {
-              id: String(idx + 1),
-              sensorKey: sensor.key,
-              sensorLabel: sensor.label,
-              unit: sensor.unit,
-              low: data?.low ?? optimal?.low ?? 0,
-              high: data?.high ?? optimal?.high ?? 100,
-              isDecimal: sensor.isDecimal,
-            };
-          });
-          setWarningThresholds(list);
-        }
+        // Ngưỡng cảm biến: luôn điền đủ 7 cảm biến (từ Firebase hoặc dự phòng chuẩn tối ưu)
+        const t = config.config?.threshold;
+        setWarningThresholds(buildThresholdsList(t));
       }
       setIsLoading(false);
     });
@@ -227,175 +238,229 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
-      {/* Tiêu đề */}
-      <div>
-        <h1 className="font-display text-2xl sm:text-3xl font-bold text-foreground">Cài đặt</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          Quản lý cây ớt và ngưỡng cảm biến
-        </p>
-      </div>
-
-      {/* 1. KHỐI CÂY ỚT & MÙA VỤ */}
-      <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🌶️</span>
-            <div>
-              <h2 className="font-display text-base font-bold text-foreground">Cây ớt & mùa vụ</h2>
-              <p className="text-xs text-muted-foreground">Lấy dữ liệu gieo trồng và độ tuổi từ DB quan trắc</p>
-            </div>
-          </div>
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-            {currentStage}
-          </span>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          {/* Cây trồng: Cố định cây ớt */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Cây trồng</Label>
-            <Input
-              value="Cây ớt"
-              disabled
-              className="h-9 text-xs font-medium bg-secondary/50 text-foreground cursor-default"
-            />
+      <Tabs
+        value={activeTab}
+        onValueChange={(val) => setSearchParams({ tab: val })}
+        className="space-y-6"
+      >
+        {/* Tiêu đề trang & Thanh chuyển tab điều hướng chuẩn UI/UX */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/60 pb-4">
+          <div>
+            <h1 className="font-display text-2xl sm:text-3xl font-bold text-foreground">
+              Cài đặt &amp; điều khiển
+            </h1>
+            <p className="text-muted-foreground text-xs sm:text-sm mt-0.5">
+              Quản lý thiết bị tưới tiêu, chiếu sáng, chu kỳ quan trắc và thiết lập cây trồng
+            </p>
           </div>
 
-          {/* Ngày gieo trồng (Lấy từ bản ghi đầu tiên trong DB) */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium flex items-center gap-1">
-              <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-              Ngày gieo trồng {startDate ? `(${formatDateVN(startDate)})` : ''}
-            </Label>
-            <Input
-              type="date"
-              value={startDate}
-              onChange={(e) => handleStartDateChange(e.target.value)}
-              className="h-9 text-xs font-medium"
-            />
-          </div>
-
-          {/* Độ tuổi: Sinh tự động theo dữ liệu DB */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Độ tuổi (ngày)</Label>
-            <div className="flex gap-2">
-              <Input
-                type="number"
-                min={0}
-                max={365}
-                value={editedAgeDays}
-                onChange={(e) => handleAgeDaysChange(parseInt(e.target.value) || 0)}
-                className="h-9 text-xs font-semibold"
-              />
-              <Button
-                onClick={handleSavePlantInfo}
-                disabled={isSavingPlant}
-                size="sm"
-                className="h-9 px-4 text-xs shrink-0"
-              >
-                {isSavingPlant ? 'Đang lưu...' : 'Lưu'}
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {dbSummary && (
-          <p className="text-[11px] text-muted-foreground pt-1">
-            Đồng bộ theo dữ liệu quan trắc vườn: {formatDateVN(dbSummary.firstDate)} đến {formatDateVN(dbSummary.lastDate)} ({dbSummary.totalDays} ngày)
-          </p>
-        )}
-      </div>
-
-      {/* 2. KHỐI NGƯỠNG CẢM BIẾN */}
-      <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-border">
-          <div className="flex items-center gap-2">
-            <SettingsIcon className="h-4 w-4 text-primary" />
-            <div>
-              <h2 className="font-display text-base font-bold text-foreground">Ngưỡng cảnh báo</h2>
-              <p className="text-xs text-muted-foreground">Kích hoạt cảnh báo và bật máy bơm khi vượt ngưỡng</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleApplyOptimal}
-              className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+          <TabsList className="bg-secondary/70 p-1 rounded-xl h-11 w-full md:w-auto grid grid-cols-3 sm:inline-flex">
+            <TabsTrigger
+              value="controls"
+              className="text-xs sm:text-sm gap-2 rounded-lg data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-xs font-medium"
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              Điền chuẩn cây ớt
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSaveThresholds}
-              disabled={isSavingThresholds}
-              className="h-8 text-xs gap-1.5 shadow-xs"
+              <Power className="h-4 w-4 text-emerald-500" />
+              <span>Điều khiển</span>
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="agronomy"
+              className="text-xs sm:text-sm gap-2 rounded-lg data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-xs font-medium"
             >
-              <Save className="h-3.5 w-3.5" />
-              {isSavingThresholds ? 'Đang lưu...' : 'Lưu ngưỡng'}
-            </Button>
-          </div>
+              <Sprout className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <span>Cây trồng &amp; ngưỡng</span>
+            </TabsTrigger>
+
+            <TabsTrigger
+              value="system"
+              className="text-xs sm:text-sm gap-2 rounded-lg data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-xs font-medium"
+            >
+              <Clock className="h-4 w-4 text-sky-500" />
+              <span>Chu kỳ lấy mẫu</span>
+            </TabsTrigger>
+          </TabsList>
         </div>
 
-        {/* Bảng nhập ngưỡng ngắn gọn */}
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/40 text-xs hover:bg-secondary/40">
-                <TableHead className="font-semibold text-foreground py-2.5">Cảm biến</TableHead>
-                <TableHead className="font-semibold text-foreground text-center py-2.5 w-36">
-                  Dưới ngưỡng (Thấp)
-                </TableHead>
-                <TableHead className="font-semibold text-foreground text-center py-2.5 w-36">
-                  Vượt ngưỡng (Cao)
-                </TableHead>
-                <TableHead className="font-semibold text-muted-foreground text-right py-2.5 hidden sm:table-cell">
-                  Chuẩn tối ưu
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {warningThresholds.map((t) => {
-                const opt = CHILI_OPTIMAL_THRESHOLDS[t.sensorKey];
-                return (
-                  <TableRow key={t.id} className="text-xs hover:bg-secondary/20">
-                    <TableCell className="font-medium py-2.5">
-                      {t.sensorLabel}{' '}
-                      <span className="text-muted-foreground text-[11px]">({t.unit})</span>
-                    </TableCell>
-                    <TableCell className="py-2 text-center">
-                      <Input
-                        type="number"
-                        step={t.isDecimal ? '0.1' : '1'}
-                        value={t.low}
-                        onChange={(e) => updateThresholdValue(t.id, 'low', Number(e.target.value), t.isDecimal)}
-                        className="w-24 h-8 text-xs text-center mx-auto"
-                      />
-                    </TableCell>
-                    <TableCell className="py-2 text-center">
-                      <Input
-                        type="number"
-                        step={t.isDecimal ? '0.1' : '1'}
-                        value={t.high}
-                        onChange={(e) => updateThresholdValue(t.id, 'high', Number(e.target.value), t.isDecimal)}
-                        className="w-24 h-8 text-xs text-center mx-auto"
-                      />
-                    </TableCell>
-                    <TableCell className="py-2.5 text-right text-muted-foreground hidden sm:table-cell">
-                      {opt ? `${opt.low} – ${opt.high} ${t.unit}` : '—'}
-                    </TableCell>
+        {/* TAB 1: ĐIỀU KHIỂN THIẾT BỊ (MÁY BƠM, ĐÈN, LẬP LỊCH, THỐNG KÊ HOẠT ĐỘNG) */}
+        <TabsContent value="controls" className="space-y-6 animate-fade-in mt-0">
+          <DeviceControlsSection />
+        </TabsContent>
+
+        {/* TAB 2: CÂY TRỒNG & NGƯỠNG CẢNH BÁO */}
+        <TabsContent value="agronomy" className="space-y-6 animate-fade-in mt-0">
+          {/* 1. KHỐI CÂY ỚT & MÙA VỤ */}
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🌶️</span>
+                <div>
+                  <h2 className="font-display text-base font-bold text-foreground">Cây ớt & mùa vụ</h2>
+                  <p className="text-xs text-muted-foreground">Lấy dữ liệu gieo trồng và độ tuổi từ DB quan trắc</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                  {currentStage}
+                </span>
+                <Button
+                  onClick={handleSavePlantInfo}
+                  disabled={isSavingPlant}
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 shadow-xs"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {isSavingPlant ? 'Đang lưu...' : 'Lưu thông tin'}
+                </Button>
+              </div>
+            </div>
+
+            {/* 3 ô nhập liệu cân đối 100% trên cùng một hàng ngang */}
+            <div className="grid gap-4 sm:grid-cols-3 items-end">
+              {/* Cột 1: Cây trồng */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5 h-5 text-muted-foreground">
+                  <Sprout className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-foreground">Cây trồng</span>
+                </Label>
+                <Input
+                  value="Cây ớt"
+                  disabled
+                  className="h-9 text-xs font-medium bg-secondary/50 text-foreground cursor-default w-full"
+                />
+              </div>
+
+              {/* Cột 2: Ngày gieo trồng */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5 h-5 text-muted-foreground">
+                  <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-foreground">Ngày gieo trồng</span>
+                </Label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  className="h-9 text-xs font-medium w-full"
+                />
+              </div>
+
+              {/* Cột 3: Độ tuổi */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5 h-5 text-muted-foreground">
+                  <Clock className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-foreground">Độ tuổi (ngày)</span>
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={editedAgeDays}
+                  onChange={(e) => handleAgeDaysChange(parseInt(e.target.value) || 0)}
+                  className="h-9 text-xs font-semibold w-full"
+                />
+              </div>
+            </div>
+
+            {dbSummary && (
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Đồng bộ theo dữ liệu quan trắc vườn: {formatDateVN(dbSummary.firstDate)} đến {formatDateVN(dbSummary.lastDate)} ({dbSummary.totalDays} ngày)
+              </p>
+            )}
+          </div>
+
+          {/* 2. KHỐI NGƯỠNG CẢM BIẾN */}
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <SettingsIcon className="h-4 w-4 text-primary" />
+                <div>
+                  <h2 className="font-display text-base font-bold text-foreground">Ngưỡng cảnh báo</h2>
+                  <p className="text-xs text-muted-foreground">Kích hoạt cảnh báo và bật máy bơm khi vượt ngưỡng</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleApplyOptimal}
+                  className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+                >
+                  <Sprout className="h-3.5 w-3.5" />
+                  Điền chuẩn cây ớt
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveThresholds}
+                  disabled={isSavingThresholds}
+                  className="h-8 text-xs gap-1.5 shadow-xs"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {isSavingThresholds ? 'Đang lưu...' : 'Lưu ngưỡng'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Bảng nhập ngưỡng ngắn gọn */}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-secondary/40 text-xs hover:bg-secondary/40">
+                    <TableHead className="font-semibold text-foreground py-2.5">Cảm biến</TableHead>
+                    <TableHead className="font-semibold text-foreground text-center py-2.5 w-36">
+                      Dưới ngưỡng (thấp)
+                    </TableHead>
+                    <TableHead className="font-semibold text-foreground text-center py-2.5 w-36">
+                      Vượt ngưỡng (cao)
+                    </TableHead>
+                    <TableHead className="font-semibold text-muted-foreground text-right py-2.5 hidden sm:table-cell">
+                      Chuẩn tối ưu
+                    </TableHead>
                   </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
+                </TableHeader>
+                <TableBody>
+                  {warningThresholds.map((t) => {
+                    const opt = CHILI_OPTIMAL_THRESHOLDS[t.sensorKey];
+                    return (
+                      <TableRow key={t.id} className="text-xs hover:bg-secondary/20">
+                        <TableCell className="font-medium py-2.5">
+                          {t.sensorLabel}{' '}
+                          <span className="text-muted-foreground text-[11px]">({t.unit})</span>
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <Input
+                            type="number"
+                            step={t.isDecimal ? '0.1' : '1'}
+                            value={t.low}
+                            onChange={(e) => updateThresholdValue(t.id, 'low', Number(e.target.value), t.isDecimal)}
+                            className="w-24 h-8 text-xs text-center mx-auto"
+                          />
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <Input
+                            type="number"
+                            step={t.isDecimal ? '0.1' : '1'}
+                            value={t.high}
+                            onChange={(e) => updateThresholdValue(t.id, 'high', Number(e.target.value), t.isDecimal)}
+                            className="w-24 h-8 text-xs text-center mx-auto"
+                          />
+                        </TableCell>
+                        <TableCell className="py-2.5 text-right text-muted-foreground hidden sm:table-cell">
+                          {opt ? `${opt.low} – ${opt.high} ${t.unit}` : '—'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </TabsContent>
 
-      {/* 3. CẤU HÌNH THỜI GIAN LẤY MẪU & TƯỚI THIẾT BỊ */}
-      <SamplingIntervalCard />
+        {/* TAB 3: CẤU HÌNH THỜI GIAN LẤY MẪU & TƯỚI THIẾT BỊ */}
+        <TabsContent value="system" className="space-y-6 animate-fade-in mt-0">
+          <SamplingIntervalCard />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

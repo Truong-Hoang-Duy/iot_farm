@@ -10,23 +10,23 @@ router = APIRouter(prefix="/alerts", tags=["AI Alerts & Anomaly Detection"])
 
 
 @router.get("/latest")
-async def get_latest_ai_alerts(refresh: bool = False):
+async def get_latest_ai_alerts(refresh: bool = False, horizon: str = "6h"):
     """
-    Lấy danh sách cảnh báo được phân tích từ mẫu dữ liệu của ngày mới nhất bằng Gemini AI.
+    Lấy danh sách cảnh báo được phân tích từ mẫu dữ liệu của ngày mới nhất và kết quả dự báo bằng Gemini AI.
     """
     try:
-        return await generate_alerts_from_latest_data(force_refresh=refresh)
+        return await generate_alerts_from_latest_data(force_refresh=refresh, horizon=horizon)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi phân tích cảnh báo: {e}")
 
 
 @router.post("/analyze")
-async def analyze_latest_alerts_with_gemini():
+async def analyze_latest_alerts_with_gemini(horizon: str = "6h"):
     """
-    Gửi mẫu đo của ngày mới nhất vào Gemini AI để phân tích lại và cập nhật lên trình duyệt.
+    Gửi mẫu đo của ngày mới nhất cùng kết quả dự báo mô hình vào Gemini AI để phân tích lại và cập nhật lên trình duyệt.
     """
     try:
-        return await generate_alerts_from_latest_data(force_refresh=True)
+        return await generate_alerts_from_latest_data(force_refresh=True, horizon=horizon)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi gọi Gemini phân tích cảnh báo: {e}")
 

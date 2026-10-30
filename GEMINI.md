@@ -29,5 +29,5 @@ Tài liệu này định nghĩa các quy tắc bắt buộc áp dụng cho mọi
 
 ### Ngoại lệ được phép viết hoa:
 1. **Danh từ riêng**: *Việt Nam, UIT, ĐHQG TP.HCM, Thủ Đức, Củ Chi, Đà Lạt, Lâm Đồng...*
-2. **Tên riêng thương hiệu & phần cứng**: *Jetson Nano, Google Gemini, Firebase, InfluxDB, FastAPI, React, Vite...*
+2. **Tên riêng thương hiệu & phần cứng**: *Jetson Nano, Google Gemini, Firebase, FastAPI, React, Vite...*
 3. **Từ viết tắt & thuật ngữ kỹ thuật**: *IoT, AI, NPK, GPS, VPD, WMO, ET0, DHT20, CWT, pH, EC, RH, XGBoost, LSTM, PatchTST, N-HiTS, Chronos.*

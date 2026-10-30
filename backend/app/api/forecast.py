@@ -81,6 +81,18 @@ async def training_status():
 
 
 @router.get("")
-async def get_forecast(target: str = "moisture", horizon: str = "6h", model: str = "best"):
+async def get_forecast(
+    target: str = "moisture",
+    horizon: str = "6h",
+    model: str = "best",
+    refresh: bool = False,
+):
     """Dự báo: history (quan sát gần nhất) + forecast [{t, yhat, lo, hi}] tới horizon yêu cầu."""
-    return await _call(_svc().forecast, target, horizon, model)
+    if refresh:
+        from app.services.sensor_processing_service import get_processed_sensor_bundle
+
+        try:
+            await get_processed_sensor_bundle(method="ffill", force_refresh=True)
+        except Exception:
+            pass
+    return await _call(_svc().forecast, target, horizon, model, refresh)

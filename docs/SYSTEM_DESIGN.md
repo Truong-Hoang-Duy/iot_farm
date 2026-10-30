@@ -1,6 +1,6 @@
-# IoT Farm v2 – Thiết kế hệ thống (System Design & Contract)
+# IoT Farm v2 – Thiết kế hệ thống (System design & contract)
 
-> Tài liệu này vừa là **kế hoạch** cho người dùng, vừa là **hợp đồng kỹ thuật** (schema Firebase, InfluxDB, API) mà mọi phần code (Jetson / Backend / Frontend / ML) phải tuân theo.
+> Tài liệu này vừa là **kế hoạch** cho người dùng, vừa là **hợp đồng kỹ thuật** (schema Firebase, API) mà mọi phần code (Jetson / Backend / Frontend / ML) phải tuân theo.
 
 ## 1. Kiến trúc tổng thể
 
@@ -17,13 +17,10 @@ flowchart LR
   FB -- "config: interval, control" --> AG
   subgraph PC["PC Windows"]
     BE["FastAPI backend (Python 3.12)"]
-    IX[("InfluxDB 3 Core - Docker :18181")]
     ML["ML: XGBoost, LSTM, N-HiTS, PatchTST, Chronos-Bolt (GPU)"]
-    BE <--> IX
     BE --> ML
   end
-  FB -- "sync Firebase to Influx (60s)" --> BE
-  BE -- "backfill Influx to Firebase (30')" --> FB
+  FB <--> BE
   OM["Open-Meteo API"] --> BE
   UI["React Dashboard :5173"] <--> FB
   UI <--> BE
@@ -34,10 +31,9 @@ flowchart LR
 | Thư mục | Nội dung |
 |---|---|
 | `edge/` | **Code chạy trên Jetson Nano** (tách riêng, Python 3.6, không phụ thuộc backend) |
-| `backend/app/services/` | `firebase_client.py`, `influx_service.py`, `sync_service.py`, `weather_service.py` |
+| `backend/app/services/` | `firebase_client.py`, `sync_service.py`, `weather_service.py` |
 | `backend/app/ml/` | Pipeline dự báo: dữ liệu, mô hình, đánh giá, huấn luyện, suy luận |
 | `backend/artifacts/` | Mô hình đã huấn luyện + `metrics.json` (gitignore) |
-| `docker-compose.yml` | InfluxDB 3 Core |
 | `firebase/database.rules.json` | Security Rules đề xuất |
 
 ## 3. Firebase Realtime Database – schema
@@ -68,32 +64,22 @@ streaming/control/{pump|light}
 logs/firebase_writes/{YYYY-MM-DD}/{pushId}   # Jetson ghi sau mỗi lô upload
     ts: {".sv":"timestamp"}, device_id, n_records, first_key, last_key, status: "ok"|"error",
     http_status, duration_ms, queue_pending, from_backlog: bool, error
-logs/sync/{YYYY-MM-DD}/{pushId}              # Backend ghi sau mỗi lần đồng bộ
-    ts, direction: "firebase_to_influx"|"influx_to_firebase", n_records, range_start, range_end,
+logs/sync/{YYYY-MM-DD}/{pushId}              # Backend ghi sau mỗi phiên đồng bộ
+    ts, direction: "firebase_to_backend"|"backend_to_firebase", n_records, range_start, range_end,
     status: "ok"|"error"|"noop", duration_ms, error
 recommendations/latest                  # giữ nguyên
 ```
 
 **Trạng thái Online/Offline**: `online = (serverNow - last_seen) <= max(3 × heartbeat_sec, 30 s)`, với `serverNow = Date.now() + .info/serverTimeOffset`. Heartbeat = `min(interval, 15 s)`.
 
-## 4. InfluxDB 3 Core – schema (database `iot_farm`)
-
-| Table | Tags | Fields |
-|---|---|---|
-| `sensor_data` | `device_id` | temperature, humidity, soiltemp, moisture, pH, EC, N, P, K (float), `tq` (string) |
-| `weather` | `kind` = archive/forecast, `location` | temperature_2m, relative_humidity_2m, precipitation, rain, cloud_cover, shortwave_radiation, et0_fao_evapotranspiration, vapour_pressure_deficit, wind_speed_10m, soil_temperature_0cm, soil_moisture_0_to_1cm, … |
-| `sync_log` | `direction`, `status` | n_records, duration_ms, range_start, range_end, error |
-
-Không đặt "source" làm tag để InfluxDB tự khử trùng lặp theo (series, timestamp). Docker chạy `--query-file-limit` cao vì InfluxDB 3 Core mặc định chỉ cho truy vấn ~72 h (432 file Parquet).
-
-## 5. Backend API (prefix `/api`)
+## 4. Backend API (prefix `/api`)
 
 | Method | Path | Mô tả |
 |---|---|---|
 | GET | `/api/sync/status` | Trạng thái đồng bộ, watermark, lần chạy gần nhất |
-| GET | `/api/sync/logs?direction=&limit=200` | Log đồng bộ (từ InfluxDB `sync_log`) |
+| GET | `/api/sync/logs?direction=&limit=200` | Log đồng bộ hệ thống |
 | POST | `/api/sync/run?direction=both` | Chạy đồng bộ ngay |
-| GET | `/api/history?start=&end=&every=5m&fields=` | Dữ liệu cảm biến từ InfluxDB (gộp theo bucket) |
+| GET | `/api/history?start=&end=&every=5m&fields=` | Dữ liệu cảm biến lịch sử quan trắc (gộp theo bucket) |
 | GET | `/api/weather/current` | Thời tiết hiện tại |
 | GET | `/api/weather/history?start=YYYY-MM-DD&end=YYYY-MM-DD` | Dữ liệu cũ (ERA5 archive + bù forecast gần đây), hourly |
 | GET | `/api/weather/forecast?days=7` | Dự báo hourly tới 16 ngày |
@@ -106,7 +92,7 @@ Không đặt "source" làm tag để InfluxDB tự khử trùng lặp theo (ser
 Horizon keys: `5m, 10m, 30m, 1h, 2h, 6h, 12h, 1d, 2d, 3d, 4d, 5d`.
 Targets: `temperature, humidity, soiltemp, moisture, pH, EC, N, P, K` (bỏ `light`).
 
-## 6. Mô hình dự báo (5 mô hình + 2 baseline)
+## 5. Mô hình dự báo (5 mô hình + 2 baseline)
 
 | # | Mô hình | Trường phái | Lý do chọn | Tài liệu gốc |
 |---|---|---|---|---|
@@ -148,7 +134,7 @@ Dữ liệu được resample về lưới 5 phút (trung bình) bất kể inte
 
 Tính theo **từng mô hình × từng biến × từng horizon**; mô hình "best" cho mỗi (biến, horizon) = MASE thấp nhất trên test.
 
-## 7. Jetson Nano agent (`edge/`)
+## 6. Jetson Nano agent (`edge/`)
 - Python 3.6 (JetPack 4.6), thư viện tối thiểu: `requests`, `minimalmodbus`, `pyserial`, `smbus2` (tái sử dụng logic từ `read_soil.py`, `read_dht20.py`; EC đổi µS/cm → mS/cm).
 - Khởi động cùng hệ thống bằng **systemd** (`Restart=always`).
 - **Trước mỗi lần gửi**: (1) kiểm tra mạng (DNS + TCP 443 tới Firebase), (2) kiểm tra đồng bộ giờ **NTP** (`timedatectl` + truy vấn SNTP). Không có RTC → bản ghi lưu kèm `monotonic` + `boot_id`; khi NTP đồng bộ, mốc thời gian được **hiệu chỉnh ngược** (`tq="corrected"`).
@@ -158,7 +144,7 @@ Tính theo **từng mô hình × từng biến × từng horizon**; mô hình "b
 - **Relay demo**: chế độ manual/auto/schedule cho bơm & đèn, mặc định `simulated` (chưa có relay); khi có mạch chỉ cần đặt `relay_enabled=true` + số chân GPIO.
 - Chế độ `--simulate` để chạy thử toàn bộ luồng trên PC không cần phần cứng.
 
-## 8. Xác thực Firebase (API key)
+## 7. Xác thực Firebase (API key)
 | Thành phần | Cách xác thực | Cần làm trên Firebase Console |
 |---|---|---|
 | Frontend | Firebase Auth email/password (đã có) | – |
@@ -167,8 +153,8 @@ Tính theo **từng mô hình × từng biến × từng horizon**; mô hình "b
 
 Sau đó deploy `firebase/database.rules.json` (yêu cầu `auth != null`).
 
-## 9. Kế hoạch kiểm thử
+## 8. Kế hoạch kiểm thử
 - Edge: chạy `--simulate` trên PC → kiểm tra queue offline (ngắt mạng giả lập), hiệu chỉnh thời gian, upload theo lô.
-- Backend: InfluxDB Docker + seed `soil_all.json` → sync 2 chiều, log.
+- Backend: Kết nối Firebase RTDB + nạp dữ liệu `soil_all.json` → đối soát, ghi log đồng bộ.
 - ML: huấn luyện thật trên dữ liệu 261 ngày bằng GPU, kiểm tra metrics hợp lý (MASE < 1 so với Seasonal Naive).
 - Frontend: `npm run build` + kiểm tra các trang.

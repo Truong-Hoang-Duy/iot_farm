@@ -118,6 +118,7 @@ export default function AlertsPage() {
   const [overrides, setOverrides] = useState<Record<string, AlertOverride>>(loadOverrides);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentHorizon, setCurrentHorizon] = useState<string>('6h');
   const [showPromptDetail, setShowPromptDetail] = useState(false);
   const [activeTab, setActiveTab] = useState<'active' | 'unconfirmed' | 'confirmed' | 'dismissed'>('active');
 
@@ -183,28 +184,50 @@ export default function AlertsPage() {
     );
   };
 
-  const handleAnalyzeWithGemini = async () => {
+  const handleAnalyzeWithGemini = async (horizonArg?: string, silent: boolean = false) => {
+    const hz = horizonArg || currentHorizon;
     setIsAnalyzing(true);
     try {
-      const bundle = await triggerAnalyzeAIAlerts();
+      const bundle = await triggerAnalyzeAIAlerts(hz);
       applyBundleToState(bundle);
-      if (bundle.status === 'no_data_today') {
-        toast({
-          title: 'Chưa có dữ liệu đo hôm nay',
-          description: 'Hệ thống chưa ghi nhận số liệu đo mới của ngày hôm nay.',
-        });
-      } else {
-        toast({
-          title: 'Đã cập nhật phân tích',
-          description: `Phát hiện ${bundle.alerts.length} cảnh báo từ mẫu đo ${bundle.sensor_timestamp}.`,
-        });
+      if (!silent) {
+        if (bundle.status === 'no_data_today') {
+          toast({
+            title: 'Chưa có dữ liệu đo hôm nay',
+            description: 'Hệ thống chưa ghi nhận số liệu đo mới của ngày hôm nay.',
+          });
+        } else {
+          toast({
+            title: 'Đã cập nhật cảnh báo hệ thống',
+            description: `Phát hiện ${bundle.alerts.length} cảnh báo từ mẫu đo ${formatDateTimeVN(bundle.sensor_timestamp)} và dự báo ${hz}.`,
+          });
+        }
       }
     } catch (e: any) {
-      toast({
-        title: 'Lỗi phân tích cảnh báo',
-        description: e?.message || 'Không thể kết nối máy chủ phân tích.',
-        variant: 'destructive',
-      });
+      if (!silent) {
+        toast({
+          title: 'Lỗi phân tích cảnh báo',
+          description: e?.message || 'Không thể kết nối máy chủ phân tích.',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const handleForecastComplete = async (info: { lastObsTs: string; horizon: string; force: boolean }) => {
+    setCurrentHorizon(info.horizon);
+    if (info.force) {
+      await handleAnalyzeWithGemini(info.horizon, false);
+      return;
+    }
+    setIsAnalyzing(true);
+    try {
+      const bundle = await fetchLatestAIAlerts(false, info.horizon);
+      if (bundle) {
+        applyBundleToState(bundle);
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -436,7 +459,7 @@ export default function AlertsPage() {
       </div>
 
       {/* Phần 1: Dự báo xu hướng ngắn hạn & dài hạn */}
-      <UserForecastSection />
+      <UserForecastSection onForecastComplete={handleForecastComplete} />
 
       {/* Phần 2: Cảnh báo hệ thống */}
       <div className="rounded-2xl border border-border bg-card shadow-xs overflow-hidden">
@@ -452,6 +475,11 @@ export default function AlertsPage() {
                 <span className="rounded-lg bg-secondary px-2.5 py-0.5 text-xs text-muted-foreground">
                   Mẫu đo: <b className="text-foreground">{formatDateTimeVN(aiBundle.sensor_timestamp)}</b>
                   {aiBundle.plant_context?.growth_stage ? ` • ${aiBundle.plant_context.growth_stage}` : ''}
+                </span>
+              )}
+              {aiBundle && aiBundle.status !== 'no_data_today' && (
+                <span className="rounded-lg bg-primary/10 text-primary px-2.5 py-0.5 text-[11px] font-medium">
+                  Đã đồng bộ dự báo ({aiBundle.forecast_horizon || currentHorizon})
                 </span>
               )}
             </div>
@@ -504,11 +532,11 @@ export default function AlertsPage() {
             <Button
               size="sm"
               disabled={isAnalyzing}
-              onClick={handleAnalyzeWithGemini}
+              onClick={() => handleAnalyzeWithGemini(currentHorizon, false)}
               className="h-8 text-xs gap-1.5"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', isAnalyzing && 'animate-spin')} />
-              {isAnalyzing ? 'Đang kiểm tra...' : 'Phân tích mẫu đo'}
+              {isAnalyzing ? 'Đang phân tích...' : 'Phân tích lại cảnh báo'}
             </Button>
           </div>
         </div>
@@ -516,7 +544,7 @@ export default function AlertsPage() {
         <div className="p-4 sm:p-5 space-y-4">
           {/* Bảng đối chiếu chỉ số vượt ngưỡng (chỉ mở khi người dùng bấm xem) */}
           {showPromptDetail && aiBundle && (
-            <div className="rounded-xl bg-secondary/35 border border-border p-3.5 text-xs space-y-2.5">
+            <div className="rounded-xl bg-secondary/35 border border-border p-3 text-xs max-h-48 overflow-y-auto">
               {aiBundle.anomalies_detected && aiBundle.anomalies_detected.length > 0 ? (
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {aiBundle.anomalies_detected.map((item) => (
@@ -524,13 +552,13 @@ export default function AlertsPage() {
                       key={item.key}
                       className="rounded-lg bg-card border border-border px-3 py-2 flex items-center justify-between gap-2"
                     >
-                      <div>
-                        <span className="font-semibold text-foreground block">{item.label}</span>
+                      <div className="min-w-0">
+                        <span className="font-semibold text-foreground block truncate">{item.label}</span>
                         <span className="text-[11px] text-muted-foreground">
                           Chuẩn: {item.min}–{item.max} {item.unit}
                         </span>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <span className="font-bold text-amber-600 dark:text-amber-400 block">
                           {item.value} {item.unit}
                         </span>
@@ -558,31 +586,31 @@ export default function AlertsPage() {
                   type="button"
                   onClick={() => setActiveTab(item.key)}
                   className={cn(
-                    'rounded-xl border px-3.5 py-2.5 text-left transition-all flex items-center justify-between gap-2',
+                    'rounded-xl border px-3.5 py-2 text-left transition-all flex items-center justify-between gap-2',
                     isSelected
                       ? cn(item.activeClass, 'shadow-2xs ring-1 ring-current/20')
                       : 'border-border bg-secondary/20 hover:bg-secondary/50 text-foreground',
                   )}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
                     <Icon className={cn('h-4 w-4 shrink-0', item.iconClass)} />
                     <span className="text-xs sm:text-sm font-medium truncate">{item.label}</span>
                   </div>
-                  <span className="font-display text-lg font-bold shrink-0">{item.count}</span>
+                  <span className="font-display text-base sm:text-lg font-bold shrink-0">{item.count}</span>
                 </button>
               );
             })}
           </div>
 
-          {/* Danh sách cảnh báo */}
+          {/* Danh sách cảnh báo giới hạn chiều cao & hỗ trợ cuộn chuột mượt */}
           {isLoading ? (
-            <div className="flex items-center justify-center h-40">
+            <div className="flex items-center justify-center h-36">
               <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary"></div>
             </div>
           ) : displayedAlerts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-secondary/15 py-10 px-4 text-center">
-              <BellOff className="h-9 w-9 mx-auto text-muted-foreground/50" />
-              <h3 className="mt-2.5 font-display text-base font-semibold">
+            <div className="rounded-xl border border-dashed border-border bg-secondary/15 py-8 px-4 text-center">
+              <BellOff className="h-8 w-8 mx-auto text-muted-foreground/50" />
+              <h3 className="mt-2 font-display text-sm sm:text-base font-semibold">
                 {activeTab === 'dismissed'
                   ? 'Không có cảnh báo đã hủy bỏ'
                   : activeTab === 'confirmed'
@@ -597,144 +625,150 @@ export default function AlertsPage() {
                   : activeTab === 'confirmed'
                   ? 'Các cảnh báo sau khi khắc phục sẽ hiển thị tại mục này.'
                   : aiBundle?.status === 'no_data_today'
-                  ? 'Bấm "Phân tích mẫu đo" sau khi thiết bị gửi dữ liệu mới.'
+                  ? 'Bấm "Phân tích lại cảnh báo" sau khi thiết bị gửi dữ liệu mới.'
                   : 'Các chỉ số đất và môi trường hiện nằm trong ngưỡng ổn định.'}
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {displayedAlerts.map((alert) => {
-                const config = levelConfig[alert.level] || levelConfig[0];
-                const Icon = config.icon;
-                const isAcknowledged = !!alert.acknowledged;
-                const isDismissed = !alert.active || !!alert.dismissed;
+            <div className="space-y-2">
+              <div className="max-h-[400px] overflow-y-auto pr-1.5 space-y-2.5 scroll-smooth">
+                {displayedAlerts.map((alert) => {
+                  const config = levelConfig[alert.level] || levelConfig[0];
+                  const Icon = config.icon;
+                  const isAcknowledged = !!alert.acknowledged;
+                  const isDismissed = !alert.active || !!alert.dismissed;
 
-                return (
-                  <div
-                    key={alert.id}
-                    className={cn(
-                      'rounded-xl border p-4 transition-all bg-card',
-                      isDismissed
-                        ? 'opacity-70 border-dashed border-border'
-                        : isAcknowledged
-                        ? 'border-emerald-500/35 bg-emerald-500/[0.02]'
-                        : cn(config.borderClass, config.bgClass)
-                    )}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start gap-3.5 justify-between">
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <div
-                          className={cn(
-                            'rounded-xl p-2.5 shrink-0 mt-0.5',
-                            isDismissed ? 'bg-muted text-muted-foreground' : config.iconBgClass
-                          )}
-                        >
-                          <Icon className="h-4 w-4" />
-                        </div>
-
-                        <div className="flex-1 min-w-0 space-y-1.5">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="font-semibold text-sm text-foreground">{alert.id}</h4>
-                            <span className={cn('text-[11px] px-2 py-0.5 rounded-md font-medium', config.iconBgClass)}>
-                              {config.label}
-                            </span>
-
-                            {isDismissed ? (
-                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
-                                Đã hủy bỏ
-                              </span>
-                            ) : isAcknowledged ? (
-                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 font-medium flex items-center gap-1">
-                                <CheckCircle2 className="h-3 w-3" /> Đã xử lý
-                              </span>
-                            ) : (
-                              <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 font-medium flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                                Chờ xử lý
-                              </span>
+                  return (
+                    <div
+                      key={alert.id}
+                      className={cn(
+                        'rounded-xl border p-3 sm:p-3.5 transition-all bg-card',
+                        isDismissed
+                          ? 'opacity-70 border-dashed border-border'
+                          : isAcknowledged
+                          ? 'border-emerald-500/35 bg-emerald-500/[0.02]'
+                          : cn(config.borderClass, config.bgClass)
+                      )}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-3 justify-between">
+                        <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                          <div
+                            className={cn(
+                              'rounded-lg p-2 shrink-0 mt-0.5',
+                              isDismissed ? 'bg-muted text-muted-foreground' : config.iconBgClass
                             )}
-
-                            <span className="text-[11px] text-muted-foreground ml-auto">
-                              {formatTime(alert.time)}
-                            </span>
+                          >
+                            <Icon className="h-4 w-4" />
                           </div>
 
-                          <p className="text-xs sm:text-sm text-foreground leading-relaxed">{alert.message}</p>
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <h4 className="font-semibold text-xs sm:text-sm text-foreground">{alert.id}</h4>
+                              <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-medium', config.iconBgClass)}>
+                                {config.label}
+                              </span>
 
-                          {alert.action && (
-                            <div className="rounded-lg bg-background/80 border border-border/70 px-3 py-2 text-xs flex items-start gap-2">
-                              <Sprout className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                              <div className="space-y-0.5">
-                                <span className="font-semibold text-foreground">Hướng dẫn xử lý: </span>
-                                <span className="text-muted-foreground">{alert.action}</span>
-                              </div>
+                              {isDismissed ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium">
+                                  Đã hủy bỏ
+                                </span>
+                              ) : isAcknowledged ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-medium flex items-center gap-1">
+                                  <CheckCircle2 className="h-3 w-3" /> Đã xử lý
+                                </span>
+                              ) : (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium flex items-center gap-1">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                  Chờ xử lý
+                                </span>
+                              )}
+
+                              <span className="text-[11px] text-muted-foreground ml-auto">
+                                {formatTime(alert.time)}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      </div>
 
-                      <div className="flex sm:flex-col items-center sm:items-end gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
-                        {!isDismissed ? (
-                          <>
-                            {!isAcknowledged ? (
+                            <p className="text-xs text-foreground leading-relaxed">{alert.message}</p>
+
+                            {alert.action && (
+                              <div className="rounded-lg bg-background/80 border border-border/70 px-2.5 py-1.5 text-xs flex items-start gap-1.5">
+                                <Sprout className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-semibold text-foreground">Khuyến nghị: </span>
+                                  <span className="text-muted-foreground">{alert.action}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-row items-center gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
+                          {!isDismissed ? (
+                            <>
+                              {!isAcknowledged ? (
+                                <Button
+                                  size="sm"
+                                  className="h-7 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1 flex-1 sm:flex-initial"
+                                  onClick={() => handleConfirm(alert)}
+                                >
+                                  <Check className="h-3 w-3" />
+                                  Đã xử lý
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2.5 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 gap-1 flex-1 sm:flex-initial"
+                                  onClick={() => handleUnconfirm(alert)}
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  Hoàn tác
+                                </Button>
+                              )}
+
                               <Button
                                 size="sm"
-                                className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1 w-full sm:w-auto"
-                                onClick={() => handleConfirm(alert)}
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1"
+                                onClick={() => setDismissTarget(alert)}
                               >
-                                <Check className="h-3.5 w-3.5" />
-                                Đã xử lý
+                                <X className="h-3 w-3" />
+                                Bỏ qua
                               </Button>
-                            ) : (
+                            </>
+                          ) : (
+                            <>
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-8 text-xs border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 gap-1 w-full sm:w-auto"
-                                onClick={() => handleUnconfirm(alert)}
+                                className="h-7 px-2.5 text-xs gap-1 flex-1 sm:flex-initial"
+                                onClick={() => handleReactivate(alert)}
                               >
                                 <RotateCcw className="h-3 w-3" />
-                                Hoàn tác
+                                Khôi phục
                               </Button>
-                            )}
 
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 gap-1 w-full sm:w-auto"
-                              onClick={() => setDismissTarget(alert)}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                              Bỏ qua
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8 text-xs gap-1 w-full sm:w-auto"
-                              onClick={() => handleReactivate(alert)}
-                            >
-                              <RotateCcw className="h-3 w-3" />
-                              Khôi phục
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 text-xs text-destructive hover:bg-destructive/10 gap-1 w-full sm:w-auto"
-                              onClick={() => setDeleteTarget(alert)}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                              Xóa
-                            </Button>
-                          </>
-                        )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10 gap-1"
+                                onClick={() => setDeleteTarget(alert)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Xóa
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 px-1">
+                <span>Hiển thị {displayedAlerts.length} cảnh báo trong danh sách</span>
+              </div>
             </div>
           )}
         </div>

@@ -58,6 +58,27 @@ PREPROCESSING_DOC = {
 
 # --------------------------------------------------------------------------- raw loading
 def load_json_raw(path: Path | None = None) -> pd.DataFrame:
+    if path is None:
+        try:
+            from app.services.sensor_processing_service import get_cleaned_sensor_dataframe_sync
+
+            df_clean = get_cleaned_sensor_dataframe_sync(method="ffill")
+            if df_clean is not None and not df_clean.empty:
+                df = df_clean[C.TARGETS].copy()
+                idx = pd.to_datetime(df.index, errors="coerce")
+                df = df[~idx.isna()]
+                idx = idx[~idx.isna()]
+                if idx.tz is None:
+                    df.index = idx.tz_localize(C.TZ, ambiguous="NaT", nonexistent="shift_forward")
+                else:
+                    df.index = idx.tz_convert(C.TZ)
+                df = df[~df.index.isna()].sort_index()
+                df = df[~df.index.duplicated(keep="last")]
+                df.index.name = "time"
+                return df
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Fallback to direct JSON file read (%s)", exc)
+
     path = Path(path or C.JSON_PATH)
     with open(path, "r", encoding="utf-8") as f:
         obj = json.load(f)

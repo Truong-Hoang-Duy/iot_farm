@@ -29,13 +29,13 @@ Tài liệu này định nghĩa các quy tắc bắt buộc áp dụng cho mọi
 
 ### Ngoại lệ được phép viết hoa:
 1. **Danh từ riêng**: *Việt Nam, UIT, ĐHQG TP.HCM, Thủ Đức, Củ Chi, Đà Lạt, Lâm Đồng...*
-2. **Tên riêng thương hiệu & phần cứng**: *Jetson Nano, Google Gemini, Firebase, InfluxDB, FastAPI, React, Vite...*
+2. **Tên riêng thương hiệu & phần cứng**: *Jetson Nano, Google Gemini, Firebase, FastAPI, React, Vite...*
 3. **Từ viết tắt & thuật ngữ kỹ thuật**: *IoT, AI, NPK, GPS, VPD, WMO, ET0, DHT20, CWT, pH, EC, RH, XGBoost, LSTM, PatchTST, N-HiTS, Chronos.*
 
 ---
 
 ## 🏗️ 2. Kiến trúc & Công nghệ chính
 - **Tầng biên (Edge)**: Jetson Nano (Python 3.6, `edge/`) đọc cảm biến CWT 7-in-1 (RS485) và DHT20 (I2C), hàng đợi SQLite ngoại tuyến.
-- **Tầng dữ liệu (Cloud & Time-series)**: Firebase Realtime Database (đồng bộ thời gian thực) + InfluxDB 3 Core (lưu trữ lịch sử & huấn luyện).
+- **Tầng dữ liệu (Cloud & Time-series)**: Firebase Realtime Database (đồng bộ thời gian thực & lưu trữ lịch sử quan trắc).
 - **Backend**: FastAPI (Python 3.12, `backend/`), tích hợp Open-Meteo và pipeline Machine Learning.
 - **Frontend**: React + Vite + Tailwind CSS + Shadcn UI (`frontend/`).

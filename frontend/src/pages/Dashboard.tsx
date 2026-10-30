@@ -1,39 +1,49 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Thermometer, Droplets, FlaskConical, Zap, Atom, Wind } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Thermometer, Droplets, FlaskConical, Zap, Atom, Wind, RefreshCw } from 'lucide-react';
 import { SensorCard } from '@/components/dashboard/SensorCard';
 import { DeviceStatusCard } from '@/components/dashboard/DeviceStatusCard';
 import SensorChart from '@/components/dashboard/SensorChart';
 import {
   subscribeSensorData,
   fetchProcessedStagesSummary,
+  loadProcessedSensorDataFromBackend,
   FirebaseSensorReading,
   FirebaseSensorData,
   BackendStagesSummaryResponse,
 } from '@/services/firebaseAPI';
 import { getPlantData, getCurrentStageIndex } from '@/data/plantGrowthData';
 import { useToast } from '@/hooks/use-toast';
-import { formatDateTimeVN } from '@/lib/utils';
+import { cn, formatDateVN, formatDateTimeVN } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { DashboardSkeleton } from '@/components/common/LoadingStates';
+
+function parseDateTimeStr(tsStr: string): Date | null {
+  const [datePart, timePart] = (tsStr || '').trim().split(/\s+/);
+  if (!datePart || !timePart) return null;
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, hour || 0, minute || 0);
+}
 
 export default function Dashboard() {
   const [latestReading, setLatestReading] = useState<FirebaseSensorReading | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [latestDateStr, setLatestDateStr] = useState<string>('');
   const [allSensorData, setAllSensorData] = useState<FirebaseSensorData | null>(null);
   const [backendSummary, setBackendSummary] = useState<BackendStagesSummaryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const bestTimestampRef = useRef<string>('');
   const { toast } = useToast();
 
   const plantGrowthData = useMemo(() => getPlantData('chili'), []);
   const growthStages = plantGrowthData.stages;
 
   const actualDaysPlanted = useMemo(() => {
-    if (backendSummary?.summary?.totalDays) {
-      return backendSummary.summary.totalDays;
-    }
-    if (allSensorData) {
-      return Object.keys(allSensorData).length;
-    }
-    return 261;
+    const fromSummary = backendSummary?.summary?.totalDays ?? 0;
+    const fromData = allSensorData ? Object.keys(allSensorData).length : 0;
+    return Math.max(fromSummary, fromData) || 263;
   }, [backendSummary, allSensorData]);
 
   const currentStageIndex = useMemo(
@@ -43,21 +53,63 @@ export default function Dashboard() {
   const currentStage = growthStages[currentStageIndex];
   const targets = currentStage.targets;
 
+  const applyCandidateLatest = (tsStr: string, reading: FirebaseSensorReading) => {
+    if (!tsStr || !reading) return;
+    if (tsStr >= bestTimestampRef.current) {
+      bestTimestampRef.current = tsStr;
+      setLatestReading(reading);
+      const [dPart] = tsStr.split(' ');
+      if (dPart) setLatestDateStr(dPart);
+      const parsed = parseDateTimeStr(tsStr);
+      if (parsed) setLastUpdate(parsed);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const [summaryRes, dataRes] = await Promise.all([
+        fetchProcessedStagesSummary('ffill', true),
+        loadProcessedSensorDataFromBackend('ffill', true),
+      ]);
+      if (summaryRes) {
+        setBackendSummary(summaryRes);
+        applyCandidateLatest(summaryRes.latest.timestamp, summaryRes.latest.reading);
+      }
+      if (dataRes) {
+        setAllSensorData(dataRes);
+        const dates = Object.keys(dataRes).sort().reverse();
+        if (dates.length > 0) {
+          const latestDate = dates[0];
+          const times = Object.keys(dataRes[latestDate] || {}).sort().reverse();
+          if (times.length > 0) {
+            const latestTime = times[0];
+            applyCandidateLatest(`${latestDate} ${latestTime}`, dataRes[latestDate][latestTime]);
+          }
+        }
+      }
+      toast({
+        title: 'Đã làm mới dữ liệu tổng quan',
+        description: `Cập nhật mẫu đo mới nhất: ${formatDateTimeVN(bestTimestampRef.current)}`,
+      });
+    } catch {
+      toast({
+        title: 'Lỗi làm mới dữ liệu',
+        description: 'Không thể đồng bộ dữ liệu cảm biến mới nhất.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     // 1. Lấy bản tóm tắt chuẩn hóa & mẫu đo mới nhất đã qua xử lý từ Backend (/api/sensors/stages-summary)
     fetchProcessedStagesSummary('ffill')
       .then((res) => {
         if (res) {
           setBackendSummary(res);
-          setLatestReading(res.latest.reading);
-          const [datePart, timePart] = res.latest.timestamp.split(' ');
-          if (datePart && timePart) {
-            const [year, month, day] = datePart.split('-');
-            const [hour, minute] = timePart.split(':');
-            setLastUpdate(
-              new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
-            );
-          }
+          applyCandidateLatest(res.latest.timestamp, res.latest.reading);
           setIsLoading(false);
         }
       })
@@ -74,13 +126,7 @@ export default function Dashboard() {
             const times = Object.keys(data[latestDate]).sort().reverse();
             if (times.length > 0) {
               const latestTime = times[0];
-              setLatestReading(data[latestDate][latestTime]);
-
-              const [year, month, day] = latestDate.split('-');
-              const [hour, minute] = latestTime.split(':');
-              setLastUpdate(
-                new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
-              );
+              applyCandidateLatest(`${latestDate} ${latestTime}`, data[latestDate][latestTime]);
             }
           }
         }
@@ -125,14 +171,32 @@ export default function Dashboard() {
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
               Cây ớt • Ngày thứ {actualDaysPlanted} • Giai đoạn {currentStage.stageNumber}: {currentStage.name}
             </span>
+            {latestDateStr && (
+              <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-secondary text-foreground border border-border">
+                Ngày đo mới nhất: {formatDateVN(latestDateStr)}
+              </span>
+            )}
           </div>
           <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
             Theo dõi thông số môi trường và so sánh với mức chuẩn giai đoạn {currentStage.stageNumber}
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
-          <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
-          Cập nhật: {formatDateTimeVN(lastUpdate)}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground bg-secondary/50 px-3 py-1.5 rounded-lg border border-border/60">
+            <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
+            <span>Mẫu đo: <strong className="text-foreground">{formatDateTimeVN(lastUpdate)}</strong></span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+            {isRefreshing ? 'Đang đồng bộ...' : 'Làm mới'}
+          </Button>
         </div>
       </div>
 
@@ -203,10 +267,15 @@ export default function Dashboard() {
 
       {/* NPK Section */}
       <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 shadow-xs">
-        <h2 className="font-display text-lg sm:text-xl font-semibold mb-4 flex items-center gap-2">
-          <Atom className="h-5 w-5 text-nutrient" />
-          Dinh dưỡng NPK (chuẩn giai đoạn {currentStage.stageNumber}: {currentStage.name})
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h2 className="font-display text-lg sm:text-xl font-semibold flex items-center gap-2">
+            <Atom className="h-5 w-5 text-nutrient" />
+            Dinh dưỡng NPK (chuẩn giai đoạn {currentStage.stageNumber}: {currentStage.name})
+          </h2>
+          <span className="text-xs text-muted-foreground bg-secondary/60 px-2.5 py-1 rounded-lg border border-border/60">
+            Mẫu đo lúc: <strong className="text-foreground">{formatDateTimeVN(lastUpdate)}</strong>
+          </span>
+        </div>
 
         <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
           {/* Nitrogen */}

@@ -235,7 +235,7 @@ export const CHILI_DATA: PlantGrowthData = {
       icon: '6',
       name: 'Cuối vụ và phục hồi đất',
       minDays: 221,
-      maxDays: 261,
+      maxDays: 263,
       n: 45,
       p: 25,
       k: 45,
@@ -266,7 +266,7 @@ export const CHILI_DATA: PlantGrowthData = {
     },
   ],
   totalNPK: { n: 300, p: 230, k: 425 },
-  totalDays: 261,
+  totalDays: 263,
   careTips: {},
 };
 
@@ -500,10 +500,10 @@ export function summarizeFullFirebaseDataset(
   const sortedDates = sensorData ? Object.keys(sensorData).sort() : [];
   if (!sensorData || sortedDates.length === 0) {
     return {
-      totalDays: 261,
-      totalSamples: 75168,
+      totalDays: 263,
+      totalSamples: 75342,
       firstDate: '2025-12-14',
-      lastDate: '2026-08-31',
+      lastDate: '2026-10-30',
       overallAverage: {
         moisture: 47.18,
         pH: 5.51,
@@ -580,7 +580,7 @@ export function analyzeFirebaseDataByStages(
     { startDate: '2026-02-07', endDate: '2026-03-13', daysRecorded: 35, sampleCount: 10080 },
     { startDate: '2026-03-14', endDate: '2026-04-27', daysRecorded: 45, sampleCount: 12960 },
     { startDate: '2026-04-28', endDate: '2026-07-21', daysRecorded: 85, sampleCount: 24480 },
-    { startDate: '2026-07-22', endDate: '2026-08-31', daysRecorded: 41, sampleCount: 11808 },
+    { startDate: '2026-07-22', endDate: '2026-10-30', daysRecorded: 43, sampleCount: 11982 },
   ];
 
   const currentStageIdx = getCurrentStageIndex(ageDays, stages);

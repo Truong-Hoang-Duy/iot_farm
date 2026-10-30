@@ -26,10 +26,9 @@ const navigation = [
   { name: 'Thông tin cây trồng', href: '/plant', icon: Leaf },
   { name: 'Thời tiết', href: '/weather', icon: CloudSun },
   { name: 'Khuyến nghị', href: '/alerts', icon: ClipboardCheck },
-  { name: 'Điều khiển', href: '/controls', icon: Power },
   ...(SHOW_MODEL_LAB_TAB ? [{ name: 'Dự báo & mô hình', href: '/model-lab', icon: LineChart }] : []),
   { name: 'Nhật ký thiết bị', href: '/logs', icon: ScrollText },
-  { name: 'Cài đặt', href: '/settings', icon: Settings },
+  { name: 'Cài đặt & điều khiển', href: '/settings', icon: Settings },
 ];
 
 interface SidebarProps {

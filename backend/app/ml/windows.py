@@ -123,8 +123,9 @@ XGB_SPECS = {
 def _ffill(a: np.ndarray, block_len: int | None = None) -> np.ndarray:
     df = pd.DataFrame(a)
     if block_len:
-        return df.groupby(np.arange(len(df)) // block_len).ffill().to_numpy()
-    return df.ffill().to_numpy()
+        grp = np.arange(len(df)) // block_len
+        return df.groupby(grp).ffill().groupby(grp).bfill().to_numpy()
+    return df.ffill().bfill().to_numpy()
 
 
 class FeatureBase:

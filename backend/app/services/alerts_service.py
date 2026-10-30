@@ -255,37 +255,65 @@ def detect_anomalies(
     return anomalies
 
 
-def detect_predictive_anomalies(stage_number: int) -> List[Dict[str, Any]]:
-    """Phân tích các bất thường được mô hình XGBoost Direct dự báo trong 2 giờ tới (Early Warning theo Slide 21)."""
-    predictive = []
+def detect_predictive_anomalies(stage_number: int, horizon: str = "6h") -> List[Dict[str, Any]]:
+    """Phân tích các bất thường được mô hình dự báo xu hướng phát hiện trước trong tương lai gần."""
+    predictive: List[Dict[str, Any]] = []
     try:
         from app.ml.forecast_service import get_service
+
         svc = get_service()
-        fc_m = svc.forecast(target="moisture", horizon="2h", model="xgboost")
-        if fc_m and fc_m.get("forecast"):
-            last_pt = fc_m["forecast"][-1]
+        targets = STAGE_TARGETS.get(stage_number, STAGE_TARGETS[6])
+        for key in ("moisture", "soiltemp", "pH", "EC", "temperature", "humidity"):
+            spec = targets.get(key)
+            if not spec:
+                continue
+            fc_res = svc.forecast(target=key, horizon=horizon, model="xgboost")
+            fc_points = (fc_res or {}).get("forecast") or []
+            if not fc_points:
+                continue
+            last_pt = fc_points[-1]
             yhat = last_pt.get("yhat")
-            lo = last_pt.get("lo", yhat)
-            stage_cfg = PLANT_STAGES.get(stage_number, PLANT_STAGES[3])
-            m_target = stage_cfg["targets"].get("moisture", {})
-            t_min = float(m_target.get("min", 60.0))
-            if lo is not None and lo < 45.0:
+            if yhat is None:
+                continue
+            yhat_f = float(yhat)
+            lo_f = float(last_pt.get("lo", yhat_f) or yhat_f)
+            hi_f = float(last_pt.get("hi", yhat_f) or yhat_f)
+            t_min = float(spec["min"])
+            t_max = float(spec["max"])
+            unit = spec["unit"]
+
+            if yhat_f < t_min:
+                diff = round(yhat_f - t_min, 2)
                 predictive.append(
                     {
-                        "key": "moisture_predictive_2h",
-                        "label": "Độ ẩm đất dự báo 2h tới (XGBoost Direct)",
-                        "value": round(yhat, 1),
+                        "key": f"{key}_forecast_{horizon}",
+                        "label": f"{spec['label']} (dự báo {horizon} tới)",
+                        "value": round(yhat_f, 2),
                         "min": t_min,
-                        "max": float(m_target.get("max", 75.0)),
-                        "unit": "%",
-                        "status": f"Dự báo giảm sâu xuống {yhat:.1f}% (cận dưới an toàn 80% là {lo:.1f}%)",
-                        "delta": f"-{round(t_min - lo, 1)}%",
+                        "max": t_max,
+                        "unit": unit,
+                        "status": f"Dự báo giảm xuống {yhat_f:.2f}{unit} (khoảng {lo_f:.1f}–{hi_f:.1f}{unit}), thấp hơn ngưỡng chuẩn",
+                        "delta": f"{diff}{unit}",
                         "is_predictive": True,
                     }
                 )
-    except Exception:
-        # Safe Fallback: không làm gián đoạn hệ thống nếu ML chưa sẵn sàng
-        pass
+            elif yhat_f > t_max:
+                diff = round(yhat_f - t_max, 2)
+                predictive.append(
+                    {
+                        "key": f"{key}_forecast_{horizon}",
+                        "label": f"{spec['label']} (dự báo {horizon} tới)",
+                        "value": round(yhat_f, 2),
+                        "min": t_min,
+                        "max": t_max,
+                        "unit": unit,
+                        "status": f"Dự báo tăng lên {yhat_f:.2f}{unit} (khoảng {lo_f:.1f}–{hi_f:.1f}{unit}), vượt ngưỡng chuẩn",
+                        "delta": f"+{diff}{unit}",
+                        "is_predictive": True,
+                    }
+                )
+    except Exception as e:
+        print(f"[AlertsService] Predictive check skipped: {e}")
     return predictive
 
 
@@ -330,11 +358,16 @@ Hãy sinh danh sách cảnh báo JSON theo đúng cấu trúc yêu cầu cho cá
     return prompt
 
 
-async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[str, Any]:
+async def generate_alerts_from_latest_data(
+    force_refresh: bool = False,
+    horizon: str = "6h",
+) -> Dict[str, Any]:
     """
     Chỉ lấy trực tiếp mẫu dữ liệu của đúng NGÀY HIỆN TẠI (YYYY-MM-DD) trên Firebase (/data/{today}),
-    tạo prompt truyền vào Gemini AI, lưu kết quả cảnh báo lên Firebase /notifications và trả về.
+    kết hợp kết quả dự báo từ mô hình học máy, tạo prompt truyền vào Gemini AI,
+    lưu kết quả cảnh báo lên Firebase /notifications và trả về.
     """
+    valid_horizon = horizon if horizon in ("6h", "24h", "48h", "7d") else "6h"
     context = await get_current_plant_context(method="ffill")
     today_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -382,20 +415,23 @@ async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[
     reading = {**context["reading"], **fb_today["reading"]}
     is_mock = False
 
-    # Kiểm tra cache nếu không bắt buộc phân tích lại và cùng timestamp của ngày hôm nay
+    # Kiểm tra cache nếu không bắt buộc phân tích lại và cùng timestamp + horizon của ngày hôm nay
     if not force_refresh and os.path.exists(ALERTS_CACHE_FILE):
         try:
             with open(ALERTS_CACHE_FILE, "r", encoding="utf-8") as f:
                 cached = json.load(f)
                 if (
                     cached.get("sensor_timestamp") == timestamp
-                    and cached.get("alerts")
+                    and cached.get("forecast_horizon", "6h") == valid_horizon
+                    and cached.get("alerts") is not None
                 ):
                     return cached
         except Exception:
             pass
 
-    anomalies = detect_anomalies(reading, stage_number) + detect_predictive_anomalies(stage_number)
+    current_anomalies = detect_anomalies(reading, stage_number)
+    predictive_anomalies = detect_predictive_anomalies(stage_number, horizon=valid_horizon)
+    anomalies = current_anomalies + predictive_anomalies
     prompt = build_alerts_gemini_prompt(
         plant_type=plant_type,
         age_days=age_days,
@@ -414,36 +450,76 @@ async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[
             from google import genai
             from google.genai import types
 
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=ALERTS_SYSTEM_INSTRUCTION,
-                    temperature=0.3,
-                    response_mime_type="application/json",
+            client = genai.Client(
+                api_key=GEMINI_API_KEY,
+                http_options=types.HttpOptions(
+                    retry_options=types.HttpRetryOptions(attempts=1)
                 ),
             )
-            clean_text = _clean_json_text(response.text)
-            parsed = json.loads(clean_text)
-            if isinstance(parsed, dict) and "alerts" in parsed:
-                parsed = parsed["alerts"]
-
-            if isinstance(parsed, list):
-                for item in parsed:
-                    alerts_list.append(
-                        {
-                            "id": str(item.get("id", "Cảnh báo cảm biến")),
-                            "level": int(item.get("level", 1)),
-                            "message": str(item.get("message", "")),
-                            "action": str(item.get("action", "")),
-                            "time": timestamp,
-                            "active": True,
-                        }
+            candidate_models = list(dict.fromkeys([GEMINI_MODEL, "gemini-2.0-flash"]))
+            response = None
+            for cand_model in candidate_models:
+                try:
+                    response = client.models.generate_content(
+                        model=cand_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=ALERTS_SYSTEM_INSTRUCTION,
+                            temperature=0.3,
+                            response_mime_type="application/json",
+                        ),
                     )
+                    ai_model_used = cand_model
+                    break
+                except Exception as model_err:
+                    print(f"[AlertsService] Gemini model {cand_model} error: {type(model_err).__name__}")
+                    continue
+
+            if response is not None and getattr(response, "text", None):
+                clean_text = _clean_json_text(response.text)
+                parsed = json.loads(clean_text)
+                if isinstance(parsed, dict) and "alerts" in parsed:
+                    parsed = parsed["alerts"]
+
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        alerts_list.append(
+                            {
+                                "id": str(item.get("id", "Cảnh báo cảm biến")),
+                                "level": int(item.get("level", 1)),
+                                "message": str(item.get("message", "")),
+                                "action": str(item.get("action", "")),
+                                "time": timestamp,
+                                "active": True,
+                            }
+                        )
+            else:
+                ai_model_used = f"{GEMINI_MODEL} (Fallback)"
         except Exception as e:
-            print(f"[AlertsService] Lỗi gọi Gemini sinh cảnh báo: {e}")
+            print(f"[AlertsService] Gemini generation error: {type(e).__name__}")
             ai_model_used = f"{GEMINI_MODEL} (Fallback)"
+
+    if anomalies and not alerts_list:
+        for a in anomalies:
+            is_pred = bool(a.get("is_predictive"))
+            lvl = 2 if abs(float(str(a["delta"]).replace(a["unit"], "").replace("+", "") or 0)) > (a["max"] - a["min"]) * 0.5 else 1
+            alerts_list.append(
+                {
+                    "id": f"{a['label']} ({a['value']}{a['unit']})",
+                    "level": lvl,
+                    "message": (
+                        f"{a['label']} đạt {a['value']}{a['unit']} ({a['status']}, chuẩn giai đoạn {stage_number}: "
+                        f"{a['min']}–{a['max']}{a['unit']})."
+                    ),
+                    "action": (
+                        "Chủ động điều chỉnh chế độ tưới nhỏ giọt và dinh dưỡng sớm theo xu hướng dự báo để giữ chỉ số vùng rễ ớt trong ngưỡng an toàn."
+                        if is_pred
+                        else "Kiểm tra và điều chỉnh ngay chế độ tưới hoặc thông gió tại luống ớt để đưa chỉ số về ngưỡng chuẩn."
+                    ),
+                    "time": timestamp,
+                    "active": True,
+                }
+            )
 
     # Lưu thẳng lên Firebase node /notifications để đồng bộ realtime với trình duyệt
     notifications_map: Dict[str, Dict[str, Any]] = {}
@@ -472,12 +548,13 @@ async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[
                 json=notifications_map,
             )
     except Exception as e:
-        print(f"[AlertsService] Cảnh báo khi đồng bộ /notifications lên Firebase: {e}")
+        print(f"[AlertsService] Firebase sync warning: {type(e).__name__}")
 
     result_bundle = {
         "status": "success",
         "is_mock_test": is_mock,
         "sensor_timestamp": timestamp,
+        "forecast_horizon": valid_horizon,
         "sensor_reading": reading,
         "plant_context": {
             "plant_type": plant_type,
@@ -486,6 +563,7 @@ async def generate_alerts_from_latest_data(force_refresh: bool = False) -> Dict[
             "growth_stage": growth_stage,
         },
         "anomalies_detected": anomalies,
+        "predictive_anomalies_count": len(predictive_anomalies),
         "prompt_used": prompt,
         "ai_model_used": ai_model_used,
         "generated_at": datetime.now().isoformat(),

@@ -33,7 +33,7 @@ class ForecastService:
 
     def __init__(self):
         self._lock = threading.RLock()
-        self._infer_lock = threading.Lock()
+        self._infer_lock = threading.RLock()
         self._metrics = None
         self._metrics_mtime = None
         self._models: dict = {}
@@ -182,7 +182,12 @@ class ForecastService:
     def _compute(self, group: str, key: str) -> dict:
         cfg = C.GROUPS[group]
         raw, src = self._raw()
-        grid5 = D.make_grid(raw)
+        if len(raw) == 0:
+            raise ArtifactsMissing("Không có dữ liệu cảm biến để dự báo")
+        # Chỉ lấy tối đa 20 ngày lịch tính từ mẫu đo mới nhất để tránh tạo lưới rỗng qua các tháng nghỉ
+        cutoff = raw.index.max() - pd.Timedelta(days=20)
+        raw_tail = raw.loc[raw.index >= cutoff]
+        grid5 = D.make_grid(raw_tail)
         fin = grid5.notna().any(axis=1)
         if not fin.any():
             raise ArtifactsMissing("Không có dữ liệu cảm biến để dự báo")
@@ -217,7 +222,7 @@ class ForecastService:
         return {"ctx": ctx, "pred": p, "origin": T, "last_obs": last_obs, "source": src, "device": dev,
                 "weather_source": wsrc, "note": fallback, "computed_at": time.time()}
 
-    def forecast(self, target: str, horizon: str, model: str = "best") -> dict:
+    def forecast(self, target: str, horizon: str, model: str = "best", refresh: bool = False) -> dict:
         if target not in C.TARGETS:
             raise NotFound(f"unknown target {target}; expected one of {C.TARGETS}")
         if horizon not in C.HORIZON_TO_GROUP:
@@ -232,12 +237,17 @@ class ForecastService:
         if not self.model_available(key, group):
             raise ArtifactsMissing(f"Mô hình {key} ({group}) chưa được huấn luyện")
         ck = (group, key)
-        with self._lock:
-            hit = self._fc_cache.get(ck)
-        if not hit or time.time() - hit["computed_at"] > C.FORECAST_CACHE_SEC:
-            hit = self._compute(group, key)
+        if refresh:
             with self._lock:
-                self._fc_cache[ck] = hit
+                self._data_cache = None
+                self._fc_cache.pop(ck, None)
+        with self._infer_lock:
+            with self._lock:
+                hit = self._fc_cache.get(ck)
+            if not hit or time.time() - hit["computed_at"] > C.FORECAST_CACHE_SEC:
+                hit = self._compute(group, key)
+                with self._lock:
+                    self._fc_cache[ck] = hit
         ctx, p = hit["ctx"], hit["pred"]
         j = C.TARGETS.index(target)
         res_min = cfg["resolution_minutes"]

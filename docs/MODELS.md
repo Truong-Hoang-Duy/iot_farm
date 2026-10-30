@@ -18,8 +18,8 @@ Mọi mô hình là **dự báo trực tiếp đa bước** (một lần dự b�
 
 ## 2. Dữ liệu và tiền xử lý
 
-Nguồn: InfluxDB 3 (`sensor_data`) nếu truy cập được và có ≥ 7 ngày dữ liệu, ngược lại `frontend/public/soil_all.json`
-(biến môi trường `ML_DATA_SOURCE=auto|influx|json`). Bộ dữ liệu hiện tại: 14/12/2025 → 31/08/2026, 261 ngày × 288 = 75 168 bản ghi 5 phút,
+Nguồn dữ liệu: Firebase Realtime Database kết hợp bộ dữ liệu quan trắc lịch sử `frontend/public/soil_all.json`.
+Bộ dữ liệu hiện tại: 14/12/2025 → 31/08/2026, 261 ngày × 288 = 75 168 bản ghi 5 phút,
 giờ địa phương Asia/Ho_Chi_Minh.
 
 Các bước (file `app/ml/data.py`), theo thứ tự:

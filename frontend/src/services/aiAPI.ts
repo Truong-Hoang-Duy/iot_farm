@@ -142,6 +142,7 @@ export interface AIAlertsBundleResponse {
   status: string;
   is_mock_test: boolean;
   sensor_timestamp: string;
+  forecast_horizon?: string;
   sensor_reading: SensorReadingInput;
   plant_context: {
     plant_type: string;
@@ -158,16 +159,21 @@ export interface AIAlertsBundleResponse {
     unit: string;
     status: string;
     delta: string;
+    is_predictive?: boolean;
   }>;
+  predictive_anomalies_count?: number;
   prompt_used: string;
   ai_model_used: string;
   generated_at: string;
   alerts: AIAlertItem[];
 }
 
-export const fetchLatestAIAlerts = async (refresh: boolean = false): Promise<AIAlertsBundleResponse | null> => {
+export const fetchLatestAIAlerts = async (
+  refresh: boolean = false,
+  horizon: string = '6h',
+): Promise<AIAlertsBundleResponse | null> => {
   try {
-    const res = await fetch(`${API_BASE}/api/alerts/latest?refresh=${refresh}`);
+    const res = await fetch(`${API_BASE}/api/alerts/latest?refresh=${refresh}&horizon=${encodeURIComponent(horizon)}`);
     if (res.ok) {
       return await res.json();
     }
@@ -177,8 +183,8 @@ export const fetchLatestAIAlerts = async (refresh: boolean = false): Promise<AIA
   return null;
 };
 
-export const triggerAnalyzeAIAlerts = async (): Promise<AIAlertsBundleResponse> => {
-  const res = await fetch(`${API_BASE}/api/alerts/analyze`, { method: 'POST' });
+export const triggerAnalyzeAIAlerts = async (horizon: string = '6h'): Promise<AIAlertsBundleResponse> => {
+  const res = await fetch(`${API_BASE}/api/alerts/analyze?horizon=${encodeURIComponent(horizon)}`, { method: 'POST' });
   if (!res.ok) {
     throw new Error(`Lỗi phân tích cảnh báo từ Gemini (HTTP ${res.status})`);
   }
