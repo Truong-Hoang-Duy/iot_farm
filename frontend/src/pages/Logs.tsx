@@ -15,6 +15,9 @@ import {
   Loader2,
   Layers,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
   Info,
   ShieldCheck,
   Server,
@@ -46,6 +49,7 @@ import {
   formatEpochMsVi,
   formatTimeOnlyVi,
   localDateToDateKey,
+  parseTimeKey,
   todayDateKey,
 } from '@/lib/timeKeys';
 
@@ -182,6 +186,23 @@ const fmtRangeValue = (v: unknown): string => {
   }
   return String(v);
 };
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+function getLogHour(log: FirebaseWriteLog): number | null {
+  if (log.first_key) {
+    const parts = log.first_key.split('/');
+    const timePart = parts[parts.length - 1];
+    const parsed = parseTimeKey(timePart);
+    if (parsed) return parsed.hour;
+  }
+  const ms = normalizeTs(log.ts);
+  if (ms !== null) {
+    const d = new Date(ms + 7 * 60 * 60 * 1000);
+    return d.getUTCHours();
+  }
+  return null;
+}
 
 // ---------- Khối hiển thị trạng thái đồng bộ Backend hoàn chỉnh ----------
 function BackendStatusDisplay({
@@ -389,11 +410,15 @@ export default function LogsPage() {
   const { toast } = useToast();
   const [dateKey, setDateKey] = useState<string>(todayDateKey());
   const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [tableDatePickerOpen, setTableDatePickerOpen] = useState(false);
 
   const [writeLogs, setWriteLogs] = useState<FirebaseWriteLog[]>([]);
   const [writeLoading, setWriteLoading] = useState(true);
   const [writeError, setWriteError] = useState<string | null>(null);
   const [writeFilter, setWriteFilter] = useState<StatusFilter>('all');
+  const [writeHourFilter, setWriteHourFilter] = useState<'all' | number>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
 
   const [syncLogs, setSyncLogs] = useState<SyncLog[]>([]);
   const [syncLoading, setSyncLoading] = useState(true);
@@ -521,10 +546,57 @@ export default function LogsPage() {
     };
   }, [syncLogs]);
 
+  const hourCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const l of writeLogs) {
+      const h = getLogHour(l);
+      if (h !== null) {
+        counts[h] = (counts[h] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [writeLogs]);
+
   const filteredWrites = useMemo(
-    () => (writeFilter === 'all' ? writeLogs : writeLogs.filter((l) => l.status === writeFilter)),
-    [writeLogs, writeFilter],
+    () =>
+      writeLogs.filter((l) => {
+        if (writeFilter !== 'all' && l.status !== writeFilter) return false;
+        if (writeHourFilter !== 'all') {
+          const h = getLogHour(l);
+          if (h !== writeHourFilter) return false;
+        }
+        return true;
+      }),
+    [writeLogs, writeFilter, writeHourFilter],
   );
+
+  useEffect(() => {
+    setPage(1);
+  }, [dateKey, writeFilter, writeHourFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredWrites.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, filteredWrites.length);
+  const pagedWrites = useMemo(
+    () => filteredWrites.slice(startIndex, endIndex),
+    [filteredWrites, startIndex, endIndex],
+  );
+
+  const paginationPages = useMemo(() => {
+    const current = safePage;
+    const total = totalPages;
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    if (current <= 4) {
+      return [1, 2, 3, 4, 5, 'ellipsis', total] as (number | 'ellipsis')[];
+    }
+    if (current >= total - 3) {
+      return [1, 'ellipsis', total - 4, total - 3, total - 2, total - 1, total] as (number | 'ellipsis')[];
+    }
+    return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total] as (number | 'ellipsis')[];
+  }, [safePage, totalPages]);
   const filteredSync = useMemo(
     () =>
       syncLogs.filter(
@@ -642,16 +714,76 @@ export default function LogsPage() {
           </div>
 
           <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 shadow-xs">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
               <div>
-                <h3 className="font-display text-base sm:text-lg font-bold">Danh sách lô upload từ Jetson</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Đường dẫn: logs/firebase_writes/{dateKey} · Tối đa {LOG_LIMIT} mục gần nhất · Tự động cập nhật realtime
-                </p>
+                <h3 className="font-display text-base sm:text-lg font-bold">Danh sách log từ Jetson Nano</h3>
               </div>
-              <div className="w-full sm:w-auto">
-                <Select value={writeFilter} onValueChange={(v) => setWriteFilter(v as StatusFilter)}>
-                  <SelectTrigger className="w-full sm:w-[190px] h-9 text-xs">
+
+              {/* Bộ lọc thanh công cụ: Ngày, Giờ, Trạng thái, Đặt lại */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Lọc theo ngày */}
+                <Popover open={tableDatePickerOpen} onOpenChange={setTableDatePickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 px-3 gap-1.5 text-xs font-normal"
+                      title="Chọn ngày ghi nhận log"
+                    >
+                      <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+                      <span>{formatDateKeyVi(dateKey)}</span>
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dateKeyToLocalDate(dateKey)}
+                      onSelect={(d) => {
+                        if (d) {
+                          setDateKey(localDateToDateKey(d));
+                          setTableDatePickerOpen(false);
+                        }
+                      }}
+                      disabled={(d) => d > today}
+                      defaultMonth={dateKeyToLocalDate(dateKey)}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                {/* Lọc theo giờ */}
+                <Select
+                  value={String(writeHourFilter)}
+                  onValueChange={(v) => {
+                    setWriteHourFilter(v === 'all' ? 'all' : Number(v));
+                  }}
+                >
+                  <SelectTrigger className="w-[155px] sm:w-[170px] h-9 text-xs">
+                    <Clock className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+                    <SelectValue placeholder="Lọc theo giờ" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    <SelectItem value="all">Tất cả các giờ</SelectItem>
+                    {Array.from({ length: 24 }, (_, i) => i).map((h) => {
+                      const count = hourCounts[h] || 0;
+                      return (
+                        <SelectItem key={h} value={String(h)}>
+                          {pad2(h)}:00 - {pad2(h)}:59 {count > 0 ? `(${count})` : ''}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+
+                {/* Lọc trạng thái */}
+                <Select
+                  value={writeFilter}
+                  onValueChange={(v) => {
+                    setWriteFilter(v as StatusFilter);
+                  }}
+                >
+                  <SelectTrigger className="w-[145px] sm:w-[160px] h-9 text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -660,68 +792,93 @@ export default function LogsPage() {
                     <SelectItem value="error">Chỉ mục có lỗi</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {/* Nút đặt lại khi có bộ lọc hoạt động */}
+                {(writeHourFilter !== 'all' || writeFilter !== 'all' || !isToday) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground gap-1"
+                    onClick={() => {
+                      setWriteHourFilter('all');
+                      setWriteFilter('all');
+                      setDateKey(todayDateKey());
+                    }}
+                    title="Đặt lại toàn bộ bộ lọc về mặc định"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Đặt lại</span>
+                  </Button>
+                )}
               </div>
             </div>
 
-            <LogTableShell loading={writeLoading} error={writeError} empty={filteredWrites.length === 0} dayLabel={dayLabel}>
+            <LogTableShell
+              loading={writeLoading}
+              error={writeError}
+              empty={filteredWrites.length === 0}
+              dayLabel={writeHourFilter !== 'all' ? `${pad2(writeHourFilter)}:00 - ${pad2(writeHourFilter)}:59 (${dayLabel})` : dayLabel}
+            >
               {/* Desktop Table View (≥ md) */}
-              <div className="hidden md:block overflow-x-auto rounded-xl border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-secondary/40 text-xs">
-                      <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Thời gian</TableHead>
-                      <TableHead className="font-semibold text-foreground py-3">Trạng thái</TableHead>
-                      <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Số bản ghi</TableHead>
-                      <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Khoảng mốc giờ</TableHead>
-                      <TableHead className="font-semibold text-foreground text-right py-3">HTTP</TableHead>
-                      <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Thời lượng</TableHead>
-                      <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Hàng đợi</TableHead>
-                      <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Nguồn</TableHead>
-                      <TableHead className="font-semibold text-foreground py-3">Chi tiết / Thông báo lỗi</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredWrites.map((log) => (
-                      <TableRow key={log.id} className={cn('text-xs hover:bg-secondary/20 transition-colors', log.status === 'error' && 'bg-destructive/5')}>
-                        <TableCell className="whitespace-nowrap font-mono">{fmtTs(log.ts)}</TableCell>
-                        <TableCell>
-                          <StatusPill status={log.status} />
-                        </TableCell>
-                        <TableCell className="text-right font-semibold">{fmtNum(log.n_records)}</TableCell>
-                        <TableCell className="whitespace-nowrap font-mono text-[11px]">
-                          {log.first_key || '--'}
-                          {log.last_key && log.last_key !== log.first_key ? ` → ${log.last_key}` : ''}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-[11px]">{log.http_status ?? '--'}</TableCell>
-                        <TableCell className="text-right whitespace-nowrap text-muted-foreground">{fmtDuration(log.duration_ms)}</TableCell>
-                        <TableCell className="text-right text-muted-foreground">{fmtNum(log.queue_pending)}</TableCell>
-                        <TableCell>
-                          {log.from_backlog ? (
-                            <span className="inline-flex rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
-                              Đệm offline
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground">Trực tiếp</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs max-w-[280px]">
-                          {log.error ? (
-                            <span className="text-destructive font-medium break-words">
-                              {formatViError(log.error)}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground/60">—</span>
-                          )}
-                        </TableCell>
+              <div className="hidden md:block rounded-xl border border-border overflow-hidden">
+                <div className="overflow-x-auto overflow-y-auto max-h-[520px]">
+                  <Table className="min-w-[880px]">
+                    <TableHeader className="sticky top-0 z-10 bg-secondary/95 backdrop-blur-xs shadow-2xs">
+                      <TableRow className="text-xs border-b border-border/80">
+                        <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Thời gian</TableHead>
+                        <TableHead className="font-semibold text-foreground py-3">Trạng thái</TableHead>
+                        <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Số bản ghi</TableHead>
+                        <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Khoảng mốc giờ</TableHead>
+                        <TableHead className="font-semibold text-foreground text-right py-3">HTTP</TableHead>
+                        <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Thời lượng</TableHead>
+                        <TableHead className="font-semibold text-foreground text-right whitespace-nowrap py-3">Hàng đợi</TableHead>
+                        <TableHead className="font-semibold text-foreground whitespace-nowrap py-3">Nguồn</TableHead>
+                        <TableHead className="font-semibold text-foreground py-3">Chi tiết / Thông báo lỗi</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedWrites.map((log) => (
+                        <TableRow key={log.id} className={cn('text-xs hover:bg-secondary/20 transition-colors', log.status === 'error' && 'bg-destructive/5')}>
+                          <TableCell className="whitespace-nowrap font-mono">{fmtTs(log.ts)}</TableCell>
+                          <TableCell>
+                            <StatusPill status={log.status} />
+                          </TableCell>
+                          <TableCell className="text-right font-semibold">{fmtNum(log.n_records)}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-[11px]">
+                            {log.first_key || '--'}
+                            {log.last_key && log.last_key !== log.first_key ? ` → ${log.last_key}` : ''}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-[11px]">{log.http_status ?? '--'}</TableCell>
+                          <TableCell className="text-right whitespace-nowrap text-muted-foreground">{fmtDuration(log.duration_ms)}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">{fmtNum(log.queue_pending)}</TableCell>
+                          <TableCell>
+                            {log.from_backlog ? (
+                              <span className="inline-flex rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">
+                                Đệm offline
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground">Trực tiếp</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs max-w-[280px]">
+                            {log.error ? (
+                              <span className="text-destructive font-medium break-words">
+                                {formatViError(log.error)}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/60">—</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
 
               {/* Mobile Card View (< md) */}
               <div className="block md:hidden space-y-3">
-                {filteredWrites.map((log) => (
+                {pagedWrites.map((log) => (
                   <div
                     key={log.id}
                     className={cn(
@@ -771,6 +928,79 @@ export default function LogsPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Phân trang điều hướng 1, 2, 3, 4... */}
+              {filteredWrites.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 mt-3 border-t border-border/60 text-xs">
+                  <div className="text-muted-foreground text-center sm:text-left order-2 sm:order-1">
+                    Hiển thị <span className="font-semibold text-foreground">{startIndex + 1}</span>–<span className="font-semibold text-foreground">{endIndex}</span> trong số <span className="font-semibold text-foreground">{filteredWrites.length}</span> lô
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-center gap-1.5 order-1 sm:order-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 text-xs"
+                      disabled={safePage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      title="Trang trước"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      <span className="sr-only">Trang trước</span>
+                    </Button>
+
+                    {paginationPages.map((item, idx) =>
+                      item === 'ellipsis' ? (
+                        <span key={`ellipsis-${idx}`} className="px-1 text-muted-foreground select-none">
+                          …
+                        </span>
+                      ) : (
+                        <Button
+                          key={item}
+                          variant={item === safePage ? 'default' : 'outline'}
+                          size="sm"
+                          className={cn('h-8 min-w-[32px] px-2 text-xs font-medium', item === safePage && 'shadow-xs')}
+                          onClick={() => setPage(item)}
+                        >
+                          {item}
+                        </Button>
+                      ),
+                    )}
+
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 text-xs"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      title="Trang sau"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                      <span className="sr-only">Trang sau</span>
+                    </Button>
+
+                    <div className="flex items-center gap-1.5 ml-1 sm:ml-2">
+                      <Select
+                        value={String(pageSize)}
+                        onValueChange={(v) => {
+                          setPageSize(Number(v));
+                          setPage(1);
+                        }}
+                      >
+                        <SelectTrigger className="h-8 w-[105px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10 / trang</SelectItem>
+                          <SelectItem value="15">15 / trang</SelectItem>
+                          <SelectItem value="25">25 / trang</SelectItem>
+                          <SelectItem value="50">50 / trang</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
             </LogTableShell>
           </div>
         </TabsContent>
